@@ -11,7 +11,8 @@
  * לבדו. השעות נושאות את החברה המדווחת, כך שהחיוב נשאר נפרד.
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { Workbook } from 'exceljs';
+// exceljs הוא CommonJS: ייבוא בשם לא עובד תחת ESM, רק ברירת המחדל
+import ExcelJS from 'exceljs';
 import type { Ctx } from '../context.ts';
 import { audit, can } from '../context.ts';
 import type { Db } from '../db.ts';
@@ -605,7 +606,7 @@ const EXPORT_COLUMNS: { key: string; he: string; en: string; width: number }[] =
 /** אותו סינון של הרשימה, בקובץ אקסל. גיליון עברי נפתח מימין לשמאל. */
 async function exportExcel(ctx: Ctx, query: ListQuery, params: Params): Promise<Buffer> {
   const { rows } = await listCalls(ctx, query, params, null);
-  const book = new Workbook();
+  const book = new ExcelJS.Workbook();
   book.creator = 'ServCall';
   const sheet = book.addWorksheet(ctx.lang === 'en' ? 'Service calls' : 'קריאות שירות', {
     views: [{ rightToLeft: ctx.lang !== 'en', state: 'frozen', ySplit: 1 }],
