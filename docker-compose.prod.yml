@@ -17,6 +17,9 @@ services:
     restart: unless-stopped
     depends_on:
       db: {condition: service_healthy}
+    # רק על הלולאה המקומית. פורטים 80 ו-443 כבר תפוסים על השרת הזה,
+    # אז reverse proxy קיים מפנה לכאן. ראה README, "חיבור לדומיין".
+    ports: ["127.0.0.1:${APP_PORT:-3001}:3000"]
     environment:
       DATABASE_URL: postgres://servcall:${POSTGRES_PASSWORD}@db:5432/servcall
       PORT: 3000
@@ -31,8 +34,11 @@ services:
       WA_TEAM_TOKEN: ${WA_TEAM_TOKEN:-}
     volumes: [files:/data/files]
 
+  # Caddy משלנו רץ רק כשאין reverse proxy אחר על המכונה. הוא אינו עולה
+  # כברירת מחדל: --profile edge מפעיל אותו.
   caddy:
     image: caddy:2-alpine
+    profiles: ["edge"]
     restart: unless-stopped
     ports: ["80:80", "443:443", "443:443/udp"]
     environment:
