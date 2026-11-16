@@ -122,6 +122,7 @@ const he = {
   callsCount: 'סה"כ קריאות',
   yes: 'כן',
   no: 'לא',
+  cappedNote: 'הדו"ח הוגבל לקריאות הראשונות בסינון',
 } as const;
 
 export type Texts = Record<keyof typeof he, string>;
@@ -235,6 +236,7 @@ const en: Texts = {
   callsCount: 'Calls in total',
   yes: 'Yes',
   no: 'No',
+  cappedNote: 'The report was capped to the first matching calls',
 };
 
 export const texts = (lang: Lang): Texts => (lang === 'en' ? en : he);
