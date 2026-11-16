@@ -1,0 +1,476 @@
+/*
+ * טוקנים ופריסה.
+ *
+ * שני כללים שמחייבים את כל הקובץ:
+ *  1. אין כאן אף צבע מותג. כל מה שנוגע לחברה בא ממשתני ה-CSS שהשרת שולח
+ *     (--primary, --accent וחבריהם, ראה server/src/theme.ts). הצבעים שכאן הם
+ *     ניטרליים וסמנטיים, וזהים בכל החברות — אחרת נציג שעובד בשתיים יראה אותו
+ *     סטטוס בשני צבעים.
+ *  2. אין שימוש ב-left/right. רק תכונות לוגיות (inline-start/end), כדי שהמעבר
+ *     בין עברית לאנגלית יהיה החלפת dir ולא תיקון פריסה.
+ *
+ * ברירות המחדל ב-var(... , #...) נועדו לרגע שלפני שהערכה של החברה נטענה.
+ */
+
+:root {
+  --bg: #f1f3f5;
+  --surface: #ffffff;
+  --surface-2: #f6f7f9;
+  --border: #dfe3e8;
+  --text: #1b1f24;
+  --muted: #5c6672;
+  --danger: #b3261e;
+  --warn-bg: #fff3cd;
+  --warn-text: #5c4500;
+  --shadow: 0 1px 2px rgba(16, 24, 32, 0.12);
+  --radius: 10px;
+  --header-h: 56px;
+  color-scheme: light;
+}
+
+/* לפני שה-JS מספיק לסמן data-theme, מצב המערכת קובע */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0f1418;
+    --surface: #161a1f;
+    --surface-2: #1d232a;
+    --border: #2b333c;
+    --text: #e8ebef;
+    --muted: #9aa5b1;
+    --danger: #ff8a80;
+    --warn-bg: #3d3212;
+    --warn-text: #ffe9a8;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0f1418;
+  --surface: #161a1f;
+  --surface-2: #1d232a;
+  --border: #2b333c;
+  --text: #e8ebef;
+  --muted: #9aa5b1;
+  --danger: #ff8a80;
+  --warn-bg: #3d3212;
+  --warn-text: #ffe9a8;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 system-ui, 'Segoe UI', Arial, sans-serif;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+}
+h1 {
+  font-size: 21px;
+}
+h2 {
+  font-size: 17px;
+}
+h3 {
+  font-size: 15px;
+}
+p {
+  margin: 0;
+}
+a {
+  color: var(--primary, #1b68b3);
+  text-decoration: var(--link-decoration, none);
+}
+.muted {
+  color: var(--muted);
+}
+.error {
+  color: var(--danger);
+  margin: 0;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.spacer {
+  flex: 1;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) {
+  filter: brightness(0.97);
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent, #1b68b3);
+  outline-offset: 1px;
+}
+button.primary {
+  background: var(--accent, #1b68b3);
+  border-color: var(--accent, #1b68b3);
+  color: var(--accent-contrast, #ffffff);
+  font-weight: 600;
+}
+button.quiet {
+  background: none;
+  border-color: transparent;
+}
+button.icon {
+  background: none;
+  border: none;
+  border-radius: 50%;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 6px;
+  line-height: 1;
+}
+button.icon:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  filter: none;
+}
+
+input,
+select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+label > input,
+label > select {
+  color: var(--text);
+  font-size: 15px;
+}
+
+/* ---------- כניסה ובחירת חברה ---------- */
+
+.centered {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 22px;
+  width: min(380px, 100%);
+  display: grid;
+  gap: 14px;
+}
+
+.card.wide {
+  width: min(680px, 100%);
+}
+
+.notice {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+.company-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+/* הכרטיס נושא את צבע החברה שלו, ולא את של החברה הפעילה */
+.company-card {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  text-align: center;
+  padding: 14px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  border-inline-start: 4px solid var(--card-brand, var(--border));
+}
+.company-card:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.company-card .logo {
+  height: 34px;
+  max-width: 130px;
+  object-fit: contain;
+}
+.company-card .name {
+  font-weight: 600;
+}
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--card-brand, var(--border));
+  box-shadow: 0 0 0 1px var(--brand-edge, transparent);
+  flex: none;
+}
+
+/* ---------- מסגרת האפליקציה ---------- */
+
+.shell {
+  min-height: 100%;
+  display: grid;
+  grid-template-rows: var(--header-h) auto auto 1fr;
+}
+
+.shell > header {
+  background: var(--primary, #263674);
+  color: var(--primary-contrast, #ffffff);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-inline: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.shell > header .logo {
+  max-height: 32px;
+  max-width: 150px;
+  object-fit: contain;
+}
+.shell > header button {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  border-color: transparent;
+  color: inherit;
+}
+.shell > header button:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 24%, transparent);
+  filter: none;
+}
+
+/* פס ההקשר: רק רמז דק בצבע המותג הגולמי, שמזכיר באיזו חברה אנחנו */
+.context-strip {
+  height: 4px;
+  background: var(--brand, #263674);
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  background: var(--surface);
+  border-block-end: 1px solid var(--border);
+  padding-inline: 8px;
+}
+.tabs button {
+  background: none;
+  border: none;
+  border-radius: 0;
+  border-block-end: 3px solid transparent;
+  padding: 10px 14px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.tabs button[aria-current='page'] {
+  color: var(--primary-on-subtle, var(--text));
+  border-block-end-color: var(--accent, var(--text));
+  font-weight: 600;
+}
+
+.shell > .body {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 16px;
+  padding: 16px;
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .shell > .body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+/* ---------- אקורדיון בצד ---------- */
+
+.accordion {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.accordion > h3 {
+  padding: 10px 12px;
+  background: var(--primary-subtle, var(--surface-2));
+  color: var(--primary-on-subtle, var(--text));
+  font-size: 13px;
+  text-transform: none;
+}
+.accordion section + section {
+  border-block-start: 1px solid var(--border);
+}
+.accordion .head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 10px 12px;
+  text-align: start;
+  font-weight: 600;
+}
+.accordion .chevron {
+  color: var(--accent-arrow, var(--muted));
+  /* החץ מצביע לכיוון הקריאה; הסיבוב מתהפך עם הדף */
+  transition: transform 0.15s;
+}
+.accordion .head[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+.accordion .content {
+  padding: 0 12px 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.accordion .empty {
+  padding: 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* ---------- תפריט נפתח ---------- */
+
+.menu-host {
+  position: relative;
+}
+.menu {
+  position: absolute;
+  inset-inline-end: 0;
+  top: calc(100% + 6px);
+  min-width: 230px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 6px;
+  z-index: 20;
+  display: grid;
+  gap: 2px;
+}
+.menu .label {
+  padding: 6px 10px 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 10px;
+  text-align: start;
+}
+.menu button:hover:not(:disabled) {
+  background: var(--surface-2);
+  filter: none;
+}
+.menu button[aria-checked='true'] {
+  background: var(--primary-subtle, var(--surface-2));
+  color: var(--primary-on-subtle, var(--text));
+  font-weight: 600;
+}
+.menu hr {
+  border: none;
+  border-block-start: 1px solid var(--border);
+  margin: 4px 0;
+}
+
+/* ---------- אזהרת חוסר פעילות ונעילה ---------- */
+
+.idle-warn {
+  position: fixed;
+  inset-block-end: 16px;
+  inset-inline-end: 16px;
+  z-index: 40;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-inline-start: 4px solid var(--accent, var(--border));
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+  display: grid;
+  gap: 8px;
+  max-width: 320px;
+}
+
+/* הנעילה מכסה את העבודה אבל אינה מוחקת אותה: הדף נשאר תחת השכבה */
+.lock {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--bg) 88%, black);
+  backdrop-filter: blur(3px);
+}

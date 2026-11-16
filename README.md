@@ -28,7 +28,31 @@ cp .env.production.example .env.production   # למלא DOMAIN ו-POSTGRES_PASSW
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
 ```
 
-Caddy מנפיק HTTPS לבד. בחומת האש צריך 80 ו-443 בלבד.
+## חיבור לדומיין
+
+האפליקציה מאזינה על `127.0.0.1:3001` בלבד ואינה תופסת את 80 ו-443, כי על שרת
+שכבר מריץ reverse proxy אחר שני השירותים היו מתנגשים.
+
+**אם כבר יש reverse proxy על המכונה** (זה המצב בשרת של K-Telecom, שבו Caddy של
+`waha-ktelecom` מחזיק את הפורטים) — מוסיפים לו route לדומיין. ב-Caddyfile שלו:
+
+```
+crm.k-telecom.co.il {
+	reverse_proxy host.docker.internal:3001
+}
+```
+
+וב-`docker-compose` של אותו Caddy צריך `extra_hosts: ["host.docker.internal:host-gateway"]`
+כדי שהקונטיינר יגיע למארח. לחלופין, מחברים את שני הקונטיינרים לרשת דוקר משותפת
+ומפנים ל-`servcall-app-1:3000` לפי שם.
+
+**אם אין reverse proxy** — מרימים את Caddy שבקומפוז:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production --profile edge up -d
+```
+
+בשני המקרים התעודה מונפקת אוטומטית, וצריך רשומת A של הדומיין שמצביעה לשרת.
 
 ## מה משותף ומה פר חברה
 
