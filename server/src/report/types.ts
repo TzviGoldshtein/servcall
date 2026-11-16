@@ -141,6 +141,8 @@ export interface ReportHead {
   lang: Lang;
   dir: 'rtl' | 'ltr';
   pageLabel: string;
+  /** מה שכתוב כשהסינון לא החזיר כלום — דו"ח ריק אינו שגיאה. */
+  emptyText: string;
 }
 
 export interface ReportResult {
