@@ -300,7 +300,7 @@ export function registerParamsRoutes(app: FastifyInstance, ctx: Ctx): void {
        ON CONFLICT (company_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
       [ctx.companyId, JSON.stringify(next)],
     );
-    if (Object.keys(changes).length) await audit(ctx, 'params.update', null, changes, req.ip);
+    if (Object.keys(changes).length) await audit(ctx, 'params.update', undefined, changes, req.ip);
     return { values: next, changed: Object.keys(changes) };
   });
 }

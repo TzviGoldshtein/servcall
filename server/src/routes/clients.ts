@@ -333,7 +333,7 @@ export function registerClientsRoutes(app: FastifyInstance, ctx: Ctx): void {
       sheet.addRow(cells);
     }
     const buffer = Buffer.from(await book.xlsx.writeBuffer());
-    await audit(ctx, 'clients.export', null, { rows: rows.length, filters: q }, req.ip);
+    await audit(ctx, 'clients.export', undefined, { rows: rows.length, filters: q }, req.ip);
     return reply
       .type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
       .header('Content-Disposition', 'attachment; filename="clients.xlsx"')
