@@ -8,12 +8,11 @@
  * מחיקה אינה הדרך: ברירת המחדל היא כיבוי (`active = false`), והקובץ נמחק
  * מהדיסק רק כשמנהל מבקש זאת במפורש.
  */
-import { createReadStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { createWriteStream } from 'node:fs';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Multipart } from '@fastify/multipart';
 import { config } from '../config.ts';
