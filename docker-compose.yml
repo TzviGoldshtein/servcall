@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: servcall
+      POSTGRES_PASSWORD: servcall
+      POSTGRES_DB: servcall
+    ports: ["5433:5432"]
+    volumes: [dev_db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U servcall"]
+      interval: 5s
+volumes:
+  dev_db:
