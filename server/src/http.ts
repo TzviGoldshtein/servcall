@@ -103,9 +103,11 @@ export async function buildHttpServer(logger: Logger): Promise<FastifyInstance> 
     return reply.code(500).send({ error: msg('serverError', requestLang()) });
   });
 
+  // ציבורי: בדיקת חיות לניטור, וגם הדגל שמסך הכניסה צריך כדי להציג
+  // את כפתור הכניסה דרך ווטסאפ צוות רק כשהחיבור מוגדר
   app.get('/api/health', async () => {
     await db.query('SELECT 1');
-    return { ok: true };
+    return { ok: true, waSso: !!(config.waTeamUrl && config.waTeamToken) };
   });
 
   // ה-ctx נקרא מהבקשה הרצה; ראה requestContext.ts
