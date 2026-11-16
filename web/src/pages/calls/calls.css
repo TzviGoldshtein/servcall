@@ -1,0 +1,343 @@
+/*
+ * Layout for the service-call pages, plus the five call-status colour tokens.
+ *
+ * Every colour here is either a CSS variable from the app shell (--primary for the
+ * chrome, --accent for buttons, arrows and dividers) or one of the five status
+ * tokens below.
+ *
+ * The status tokens are defined here because web/src/styles.css did not yet carry
+ * them when these pages were written. THEY ARE FIXED FOR ALL FOUR COMPANIES and are
+ * never derived from the brand: an agent who works for K-Telecom and for Harel must
+ * see "open" in the same colour in both. If styles.css later defines the same five
+ * names, delete this block and keep that one — the names are the contract.
+ *
+ * Nothing here assumes a writing direction: the layout uses logical properties
+ * (inline-start/end, margin-inline) so Hebrew RTL and English LTR both work.
+ */
+:root {
+  --status-open: #1B68B3;
+  --status-open-bg: #E7F0F9;
+  --status-progress: #8A5A00;
+  --status-progress-bg: #FBF0DC;
+  --status-waiting: #6B3FA0;
+  --status-waiting-bg: #F0EAF8;
+  --status-closed: #2F6B3A;
+  --status-closed-bg: #E8F2EA;
+  --status-overdue: #A32020;
+  --status-overdue-bg: #FBE9E9;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --status-open: #8FBDEA;
+    --status-open-bg: #1B2A3A;
+    --status-progress: #E0B268;
+    --status-progress-bg: #332B1A;
+    --status-waiting: #C0A6E8;
+    --status-waiting-bg: #2A2238;
+    --status-closed: #8FCB9C;
+    --status-closed-bg: #1C2C21;
+    --status-overdue: #F0A0A0;
+    --status-overdue-bg: #351E1E;
+  }
+}
+
+:root[data-theme='dark'] {
+  --status-open: #8FBDEA;
+  --status-open-bg: #1B2A3A;
+  --status-progress: #E0B268;
+  --status-progress-bg: #332B1A;
+  --status-waiting: #C0A6E8;
+  --status-waiting-bg: #2A2238;
+  --status-closed: #8FCB9C;
+  --status-closed-bg: #1C2C21;
+  --status-overdue: #F0A0A0;
+  --status-overdue-bg: #351E1E;
+}
+
+/* ---------------------------------------------------------------- the list */
+
+.calls-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.calls-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.calls-toolbar .grow {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.calls-table-wrap {
+  overflow: auto;
+}
+
+.calls-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.calls-table th {
+  background: var(--primary);
+  color: var(--primary-contrast);
+  text-align: start;
+  padding: 8px;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+
+.calls-table th button {
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.calls-table th button .arrow {
+  color: var(--accent-arrow, currentColor);
+  margin-inline-start: 4px;
+}
+
+.calls-table td {
+  padding: 6px 8px;
+  border-block-end: 1px solid var(--accent-divider, #DDD);
+  vertical-align: top;
+}
+
+.calls-filters input,
+.calls-filters select {
+  width: 100%;
+  min-width: 70px;
+  box-sizing: border-box;
+}
+
+.calls-table tbody tr {
+  cursor: pointer;
+}
+
+.calls-table tbody tr:hover {
+  background: var(--primary-subtle);
+}
+
+/* the five fixed status colours, as a pill in the status column */
+.status-pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  border: 1px solid currentColor;
+}
+
+.tone-open { color: var(--status-open); background: var(--status-open-bg); }
+.tone-progress { color: var(--status-progress); background: var(--status-progress-bg); }
+.tone-waiting { color: var(--status-waiting); background: var(--status-waiting-bg); }
+.tone-closed { color: var(--status-closed); background: var(--status-closed-bg); }
+.tone-overdue { color: var(--status-overdue); background: var(--status-overdue-bg); }
+
+/* a flagged call carries a marker on its leading edge, not a repainted row */
+.calls-table tbody tr.overdue td:first-child {
+  box-shadow: inset 3px 0 0 0 var(--status-overdue);
+}
+
+.calls-paging {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ---------------------------------------------------------------- the form */
+
+.call-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+/* the client's call_remarks: a red banner on every call of that client */
+.client-remarks {
+  border: 1px solid var(--status-overdue);
+  border-inline-start-width: 5px;
+  background: var(--status-overdue-bg);
+  color: var(--status-overdue);
+  padding: 8px 12px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  font-weight: 600;
+}
+
+.linked-banner {
+  border: 1px solid var(--accent, #888);
+  border-inline-start-width: 5px;
+  background: var(--primary-subtle);
+  color: var(--primary-on-subtle);
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+
+.linked-banner .reason {
+  white-space: pre-wrap;
+}
+
+.linked-banner .parent-events {
+  margin-block-start: 8px;
+  max-height: 240px;
+  overflow: auto;
+  background: var(--surface, transparent);
+}
+
+.call-tabs {
+  display: flex;
+  gap: 4px;
+  border-block-end: 2px solid var(--accent-divider, #DDD);
+  flex-wrap: wrap;
+}
+
+.call-tabs button {
+  background: none;
+  border: 0;
+  border-block-end: 3px solid transparent;
+  padding: 8px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.call-tabs button[aria-selected='true'] {
+  border-block-end-color: var(--accent);
+  font-weight: 700;
+}
+
+.call-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.call-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.call-fields .wide {
+  grid-column: 1 / -1;
+}
+
+.required::after {
+  content: ' *';
+  color: var(--status-overdue);
+}
+
+.call-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* an event written by the system looks different from an agent's note */
+.event {
+  padding: 8px;
+  border-block-end: 1px solid var(--accent-divider, #DDD);
+  white-space: pre-wrap;
+}
+
+.event.system {
+  background: var(--primary-subtle);
+  color: var(--primary-on-subtle);
+  font-style: italic;
+  border-inline-start: 3px solid var(--accent);
+}
+
+.event .who {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.hours-auto {
+  opacity: 0.85;
+}
+
+/* ---------------------------------------------------------------- signature */
+
+.signature-pad {
+  border: 1px dashed var(--accent, #888);
+  border-radius: 6px;
+  /* sized for a tablet held in landscape; the canvas itself keeps a 2:1 ratio */
+  width: 100%;
+  max-width: 720px;
+  aspect-ratio: 2 / 1;
+  touch-action: none;
+  background: #FFFFFF;
+  display: block;
+}
+
+.signature-list img {
+  max-width: 320px;
+  background: #FFFFFF;
+  border: 1px solid var(--accent-divider, #DDD);
+}
+
+/* ---------------------------------------------------------------- stickies */
+
+.stickies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sticky {
+  background: var(--status-progress-bg);
+  color: var(--status-progress);
+  border: 1px solid var(--status-progress);
+  border-radius: 6px;
+  padding: 8px;
+  min-width: 180px;
+  max-width: 280px;
+}
+
+.sticky.overdue {
+  background: var(--status-overdue-bg);
+  color: var(--status-overdue);
+  border-color: var(--status-overdue);
+}
+
+.sticky.done {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+.sticky .body {
+  white-space: pre-wrap;
+}
+
+.sticky .meta {
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.card-note {
+  padding: 8px;
+  border-block-end: 1px solid var(--accent-divider, #DDD);
+  white-space: pre-wrap;
+}
+
+.error {
+  color: var(--status-overdue);
+}
+
+.muted {
+  opacity: 0.75;
+}
