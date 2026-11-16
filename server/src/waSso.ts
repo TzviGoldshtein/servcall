@@ -110,7 +110,7 @@ export function verifyWaToken(
   if (p.exp + CLOCK_SKEW_SECONDS < seconds) throw new WaSsoError('expired');
   if (p.iat - CLOCK_SKEW_SECONDS > seconds) throw new WaSsoError('issued in the future');
 
-  const payload: WaSsoPayload = { v: 1, aud: p.aud, iat: p.iat, exp: p.exp, nonce: p.nonce };
+  const payload: WaSsoPayload = { v: 1, aud: expect.aud, iat: p.iat, exp: p.exp, nonce: p.nonce };
   if (p.waAccountId !== undefined) {
     if (!Number.isInteger(p.waAccountId)) throw new WaSsoError('bad waAccountId');
     payload.waAccountId = p.waAccountId as number;
