@@ -66,7 +66,7 @@ export function registerCompanyRoutes(app: FastifyInstance, ctx: Ctx, hub: Hub):
               uc.role, uc.extension
        FROM companies c
        LEFT JOIN user_companies uc ON uc.company_id = c.id AND uc.user_id = $1 AND uc.active
-       WHERE c.active AND (uc.user_id IS NOT NULL OR $2)
+       WHERE c.active AND (uc.user_id IS NOT NULL OR $2::boolean)
        ORDER BY c.id`,
       [user.id, user.isSuperadmin],
     );

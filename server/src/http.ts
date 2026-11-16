@@ -14,6 +14,7 @@ import { msg } from './i18n.ts';
 import {
   requestContext,
   requestLang,
+  requestState,
   resolveCompany,
   runRequest,
   setRequestUser,
@@ -115,7 +116,12 @@ export async function buildHttpServer(logger: Logger): Promise<FastifyInstance> 
   const hub = new Hub();
 
   app.get('/ws', { websocket: true }, (socket) => {
-    const { user, companyId } = ctx;
+    // בלי חברה פעילה אין למה להאזין; סוגרים בנימוס ולא זורקים בתוך ה-upgrade
+    const { user, companyId } = requestState();
+    if (!user || companyId == null) {
+      socket.close(4003, 'no active company');
+      return;
+    }
     hub.add(socket, user.id, companyId);
     socket.send(JSON.stringify({ t: 'hello', companyId }));
   });
