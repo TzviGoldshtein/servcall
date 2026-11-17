@@ -58,7 +58,7 @@ export function CallList({
   onOpen,
   onNew,
 }: {
-  /** נקבע על ידי מעטפת האפליקציה; בלעדיו נופלים לניווט ב-hash */
+  /** נקבע על ידי מעטפת האפליקציה (ראה index.tsx) */
   onOpen?(id: number): void;
   onNew?(): void;
 }) {
@@ -108,7 +108,8 @@ export function CallList({
     setFilters((f) => ({ ...f, [key]: value }));
   };
 
-  const open = (id: number) => (onOpen ? onOpen(id) : (location.hash = `#/calls/${id}`));
+  // ברירת המחדל בלי props: ניווט בנתיב, כמו שהמסגרת עושה (ראה index.tsx)
+  const open = (id: number) => (onOpen ? onOpen(id) : history.pushState(null, '', `/calls/${id}`));
 
   const sortBy = (key: string) => {
     setPage(1);
@@ -127,7 +128,7 @@ export function CallList({
   return (
     <section className="calls-page" aria-label={t('קריאות שירות', 'Service calls')}>
       <div className="calls-toolbar">
-        <button onClick={() => (onNew ? onNew() : (location.hash = '#/calls/new'))}>
+        <button onClick={() => (onNew ? onNew() : history.pushState(null, '', '/calls/new'))}>
           {t('קריאה חדשה', 'New call')}
         </button>
         <label>

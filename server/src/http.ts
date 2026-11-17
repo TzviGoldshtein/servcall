@@ -20,7 +20,14 @@ import {
   setRequestUser,
 } from './requestContext.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
+import { registerCallRoutes } from './routes/calls.ts';
 import { registerCompanyRoutes } from './routes/companies.ts';
+import { registerEventRoutes } from './routes/events.ts';
+import { registerFileRoutes } from './routes/files.ts';
+import { registerHourRoutes } from './routes/hours.ts';
+import { registerLinkRoutes } from './routes/links.ts';
+import { registerNoteRoutes } from './routes/notes.ts';
+import { registerSignatureRoutes } from './routes/signatures.ts';
 
 /** הנתיבים שעובדים בלי סשן. כל השאר דורש התחברות, כולל /ws. */
 const PUBLIC_API = new Set([
@@ -128,6 +135,14 @@ export async function buildHttpServer(logger: Logger): Promise<FastifyInstance> 
 
   registerAuthRoutes(app, ctx, hub);
   registerCompanyRoutes(app, ctx, hub);
+  // מודול הקריאות: הרשימה והטופס, ומה שתלוי בקריאה
+  registerCallRoutes(app, ctx);
+  registerEventRoutes(app, ctx);
+  registerHourRoutes(app, ctx);
+  registerFileRoutes(app, ctx);
+  registerSignatureRoutes(app, ctx);
+  registerLinkRoutes(app, ctx);
+  registerNoteRoutes(app, ctx);
 
   app.setNotFoundHandler((req, reply) => {
     const path = req.url.split('?')[0]!;
