@@ -372,13 +372,23 @@ export function registerUsersRoutes(app: FastifyInstance, ctx: Ctx, hub?: Hub): 
     const fields = await membershipFields(member[0] ? b : { ...b, role: b.role ?? 'agent' });
     guardSelf(id, fields);
     const keys = Object.keys(fields).filter((k) => fields[k] !== undefined);
-    await ctx.db.query(
-      `INSERT INTO user_companies (user_id, company_id${keys.length ? ', ' + keys.join(', ') : ''})
-       VALUES ($1, $2${keys.map((_, i) => `, $${i + 3}`).join('')})
-       ON CONFLICT (user_id, company_id) DO UPDATE SET
-       ${keys.length ? keys.map((k) => `${k} = EXCLUDED.${k}`).join(', ') : 'active = user_companies.active'}`,
-      [id, ctx.companyId, ...keys.map((k) => fields[k])],
-    );
+    // שיוך קיים מתעדכן ב-UPDATE: INSERT ... ON CONFLICT בודק את NOT NULL של role
+    // עוד לפני הקונפליקט, ולכן PUT בלי הרשאה על שיוך קיים היה נופל ב-500
+    if (member[0]) {
+      if (keys.length) {
+        await ctx.db.query(
+          `UPDATE user_companies SET ${keys.map((k, i) => `${k} = $${i + 3}`).join(', ')}
+           WHERE user_id = $1 AND company_id = $2`,
+          [id, ctx.companyId, ...keys.map((k) => fields[k])],
+        );
+      }
+    } else {
+      await ctx.db.query(
+        `INSERT INTO user_companies (user_id, company_id${keys.length ? ', ' + keys.join(', ') : ''})
+         VALUES ($1, $2${keys.map((_, i) => `, $${i + 3}`).join('')})`,
+        [id, ctx.companyId, ...keys.map((k) => fields[k])],
+      );
+    }
     await audit(ctx, 'user.membership', String(id), { companyId: ctx.companyId, ...b }, req.ip);
     hub?.dropUser(id);
     notifyCompany(ctx, hub, 'user', id);
