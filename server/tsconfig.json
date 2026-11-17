@@ -3,7 +3,6 @@
     "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    // הייבוא בקוד נכתב עם סיומת .ts (ראו src/*.ts); tsc כותב אותה מחדש ל-.js בפלט
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
     "lib": ["ES2023"],

@@ -5,3 +5,6 @@ dist/
 backups/
 data/
 *.log
+
+# worktrees זמניים של סוכנים, לא חלק בפרויקט
+.claude/
