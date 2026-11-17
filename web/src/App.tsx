@@ -5,6 +5,7 @@ import { CompanyPicker } from './CompanyPicker';
 import { IdleTimeout } from './IdleTimeout';
 import { Login } from './Login';
 import { CallsPage } from './pages/calls';
+import { ClientsPage, SettingsPage } from './pages/maintenance/MaintenancePage';
 import { applyLang, loadLang, saveLang, t } from './i18n';
 import { applyTheme, cacheTheme, loadMode, saveMode, themeOf, watchSystemMode, type Mode } from './theme';
 
@@ -132,6 +133,11 @@ export function App() {
         {tab === 'calls' ? (
           // מודול הקריאות; המקטעים האחרים נבנים בנפרד
           <CallsPage />
+        ) : tab === 'clients' ? (
+          <ClientsPage />
+        ) : tab === 'settings' ? (
+          // נתוני הבסיס; המיתוג מתווסף ללשונית הזו על ידי המודול שלו
+          <SettingsPage />
         ) : (
           <div className="panel">
             <h2>{t(lang, TABS.find((item) => item.id === tab)!.key)}</h2>

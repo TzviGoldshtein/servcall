@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
-import { useI18n } from '../../i18n';
 
 /**
  * השכבה הדקה שכל מסכי התחזוקה יושבים עליה.
@@ -7,7 +6,7 @@ import { useI18n } from '../../i18n';
  * מה שמגיע מהמעטפת (web/src/api.ts, web/src/i18n.ts, web/src/styles.css) נוגע
  * בקובץ הזה בלבד, כדי שאם חוזה המעטפת ישתנה — יהיה מקום אחד לתקן ולא עשרה מסכים:
  *   api  — api.get/post/patch/put/del(url, body?) שמחזירים JSON וזורקים Error עם הודעה.
- *   i18n — useI18n() שמחזיר { lang, dir }.
+ *   שפה — המעטפת קובעת <html lang dir>, וכאן קוראים משם (כמו מודול הקריאות).
  *
  * טקסטים: מסכי התחזוקה נושאים את הזוג עברית/אנגלית אצלם (tx), ולא מפתחות מילון,
  * כי מילון חסר שקט היה מציג "maint.clients.title" ללקוח. כל טקסט שמגיע מהשרת
@@ -20,7 +19,8 @@ import { useI18n } from '../../i18n';
 export type Lang = 'he' | 'en';
 
 export function useLang() {
-  const { lang, dir } = useI18n() as { lang: Lang; dir: 'rtl' | 'ltr' };
+  const lang: Lang = document.documentElement.lang === 'en' ? 'en' : 'he';
+  const dir = lang === 'en' ? 'ltr' : 'rtl';
   return {
     lang,
     dir,
@@ -80,8 +80,8 @@ export const s: Record<string, CSSProperties> = {
   },
   danger: { border: '1px solid var(--danger, currentColor)', borderRadius: 6, padding: '6px 12px', font: 'inherit', background: 'transparent', color: 'inherit', cursor: 'pointer' },
   /** ההערה האדומה של הלקוח — צבע סמנטי, זהה בכל החברות (ראו theme.ts). */
-  remarks: { color: 'var(--danger, #B3261E)', fontWeight: 600 },
-  error: { color: 'var(--danger, #B3261E)', margin: 0, fontSize: 13 },
+  remarks: { color: 'var(--danger)', fontWeight: 600 },
+  error: { color: 'var(--danger)', margin: 0, fontSize: 13 },
   muted: { opacity: 0.7 },
   backdrop: {
     position: 'fixed',
@@ -94,7 +94,7 @@ export const s: Record<string, CSSProperties> = {
     zIndex: 40,
   },
   modal: {
-    background: 'var(--surface, #fff)',
+    background: 'var(--surface)',
     color: 'inherit',
     borderRadius: 12,
     maxWidth: 820,
