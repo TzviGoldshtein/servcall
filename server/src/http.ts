@@ -35,6 +35,9 @@ import { registerImporterRoutes } from './routes/importer.ts';
 import { registerLookupsRoutes } from './routes/lookups.ts';
 import { registerParamsRoutes } from './routes/params.ts';
 import { registerUsersRoutes } from './routes/users.ts';
+import { registerReportRoutes } from './routes/reports.ts';
+import { registerHoursBankRoutes } from './routes/hoursbank.ts';
+import { registerServiceRoutes } from './routes/services.ts';
 
 /** הנתיבים שעובדים בלי סשן. כל השאר דורש התחברות, כולל /ws. */
 const PUBLIC_API = new Set([
@@ -158,6 +161,10 @@ export async function buildHttpServer(logger: Logger): Promise<FastifyInstance> 
   registerLookupsRoutes(app, ctx, hub);
   registerParamsRoutes(app, ctx, hub);
   registerImporterRoutes(app, ctx, hub);
+  // דו"חות, בנק שעות ושירותים חודשיים — הכול מוגבל לחברה הפעילה
+  registerReportRoutes(app, ctx);
+  registerHoursBankRoutes(app, ctx);
+  registerServiceRoutes(app, ctx);
 
   app.setNotFoundHandler((req, reply) => {
     const path = req.url.split('?')[0]!;
