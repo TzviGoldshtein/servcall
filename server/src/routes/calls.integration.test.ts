@@ -530,8 +530,11 @@ dbTest('הרשימה: פתוחות בלבד כברירת מחדל, סינון, �
   const page1 = await ok('yossi', 'GET', '/api/calls?sort=number&dir=asc');
   const page2 = await ok('yossi', 'GET', '/api/calls?sort=number&dir=asc&page=2');
   assert.equal(page1.rows.length, 15);
-  assert.equal(page1.rows[0].number, 17601);
-  assert.equal(page2.rows[0].number, 17616);
+  // קריאות משותפות מחברה אחרת נכנסות לרשימה (ממוינות לפי המספר שלהן), לכן בודקים את אלה של הראל
+  const owned = (rows: any[]) => rows.filter((r) => !r.shared).map((r) => r.number);
+  assert.equal(owned(page1.rows)[0], 17601);
+  assert.deepEqual(owned(page1.rows), owned(page1.rows).slice().sort((a, b) => a - b));
+  assert.ok(page2.rows.length > 0 && page2.rows[0].number > page1.rows[14].number);
   assert.ok(page1.total >= 30);
   const desc = await ok('yossi', 'GET', '/api/calls?sort=number&dir=desc');
   assert.ok(desc.rows[0].number > desc.rows[14].number);
