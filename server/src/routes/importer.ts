@@ -1,11 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import type { MultipartFile } from '@fastify/multipart';
+import { rm } from 'node:fs/promises';
 import ExcelJS from 'exceljs';
 import { config } from '../config.ts';
 import { audit, type Ctx } from '../context.ts';
 import { badRequest, notFound } from '../errors.ts';
-import { bodyOf, paramsOf, queryOf, requireAdmin } from './departments.ts';
+import type { Hub } from '../http.ts';
+import { readUpload } from '../uploads.ts';
+import { bodyOf, notifyShared, paramsOf, queryOf, requireAdmin } from './departments.ts';
 import { normaliseE164 } from './contacts.ts';
 
 /**
@@ -344,14 +346,12 @@ function pruneJobs(): void {
   }
 }
 
-export function registerImporterRoutes(app: FastifyInstance, ctx: Ctx): void {
-  /** הקובץ נקרא פעם אחת לזיכרון; השורות הריקות נזרקות מיד. */
-  async function readSheet(file: MultipartFile): Promise<{ sheet: string; headers: string[]; rows: string[][]; rowNumbers: number[] }> {
+export function registerImporterRoutes(app: FastifyInstance, ctx: Ctx, hub?: Hub): void {
+  /** הקובץ נקרא פעם אחת מהנתיב הזמני של ההעלאה; השורות הריקות נזרקות מיד. */
+  async function readSheet(path: string): Promise<{ sheet: string; headers: string[]; rows: string[][]; rowNumbers: number[] }> {
     const book = new ExcelJS.Workbook();
     try {
-      // exceljs מכריז על Buffer משלו בטיפוסים שלו, ולכן ה-Buffer של node עובר בהמרה
-      const buffer = (await file.toBuffer()) as unknown as Parameters<typeof book.xlsx.load>[0];
-      await book.xlsx.load(buffer);
+      await book.xlsx.readFile(path);
     } catch {
       throw badRequest('אי אפשר לקרוא את הקובץ. צריך קובץ אקסל (xlsx)');
     }
@@ -384,7 +384,15 @@ export function registerImporterRoutes(app: FastifyInstance, ctx: Ctx): void {
   /** התאמה שהגיעה מהמסך: { "0": "clientName", "3": null, ... } או מערך. */
   function readMapping(raw: unknown, headers: string[], fallback: (ImportField | null)[]): (ImportField | null)[] {
     if (raw === undefined || raw === null || raw === '') return fallback;
-    const source = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    let source: unknown = raw;
+    if (typeof raw === 'string') {
+      try {
+        source = JSON.parse(raw);
+      } catch {
+        throw badRequest('התאמת העמודות אינה JSON תקין');
+      }
+    }
+    if (source === null || typeof source !== 'object') throw badRequest('התאמת העמודות אינה תקינה');
     const out: (ImportField | null)[] = headers.map(() => null);
     const used = new Set<ImportField>();
     const put = (index: number, value: unknown) => {
@@ -445,18 +453,22 @@ export function registerImporterRoutes(app: FastifyInstance, ctx: Ctx): void {
    */
   app.post('/api/import/clients/preview', async (req) => {
     requireAdmin(ctx);
-    const file = await req.file({ limits: { fileSize: config.maxUploadMb * 1024 * 1024 } });
-    if (!file) throw badRequest('לא נשלח קובץ');
-    const parsed = await readSheet(file);
+    if (!req.isMultipart()) throw badRequest('לא נשלח קובץ');
+    const upload = await readUpload(req);
+    if (!upload.file) throw badRequest('לא נשלח קובץ');
+    // הקובץ הזמני נמחק תמיד: מה שנשאר מההעלאה הוא השורות שבזיכרון, עד האישור
+    const parsed = await readSheet(upload.file.tempFile).finally(() =>
+      rm(upload.file!.tempFile, { force: true }),
+    );
     const suggested = suggestMapping(parsed.headers);
-    const mapping = readMapping((file.fields?.mapping as { value?: unknown } | undefined)?.value, parsed.headers, suggested);
+    const mapping = readMapping(upload.fields.mapping, parsed.headers, suggested);
 
     const token = randomBytes(16).toString('base64url');
     const job: ImportJob = {
       token,
       companyId: ctx.companyId,
       userId: ctx.user.id,
-      fileName: file.filename || 'clients.xlsx',
+      fileName: upload.file.fileName || 'clients.xlsx',
       sheet: parsed.sheet,
       headers: parsed.headers,
       mapping,
@@ -573,15 +585,17 @@ export function registerImporterRoutes(app: FastifyInstance, ctx: Ctx): void {
         const c = parsed.client;
         const group = c.groupName ? await groupId(c.groupName, parsed.row) : null;
 
-        // איתור לקוח קיים: מזהה הנה"ח קודם, ואחר כך שם זהה
+        // איתור לקוח קיים: מזהה הנה"ח קודם. שם זהה נחשב אותו לקוח רק כשאין סתירה
+        // במזהה — לקוח קיים עם מזהה אחר הוא לקוח אחר, גם אם השם זהה
         const existing = await tx.query<{ id: number }>(
           `SELECT id FROM clients
             WHERE ($1::text IS NOT NULL AND external_id = $1)
-               OR ($1::text IS NULL AND lower(name) = lower($2))
-            ORDER BY id LIMIT 1`,
+               OR (lower(name) = lower($2) AND ($1::text IS NULL OR external_id IS NULL))
+            ORDER BY (external_id IS NOT DISTINCT FROM $1) DESC, id LIMIT 1`,
           [c.externalId, c.name],
         );
         let clientId = existing.rows[0]?.id ?? null;
+        const isNew = clientId === null;
 
         if (clientId === null) {
           const made = await tx.query<{ id: number }>(
@@ -615,15 +629,19 @@ export function registerImporterRoutes(app: FastifyInstance, ctx: Ctx): void {
           stats.clientsUpdated++;
         }
 
-        // הנתון שפר חברה — תמיד לחברה הפעילה בלבד
+        // הנתון שפר חברה — תמיד לחברה הפעילה בלבד. בלי "לעדכן קיימים" שורת הגדרות
+        // שכבר קיימת לא נדרסת, בדיוק כמו הלקוח עצמו
         await tx.query(
           `INSERT INTO client_company_settings (client_id, company_id, call_remarks, hour_cost, offline)
            VALUES ($1,$2,$3,$4,COALESCE($5,false))
-           ON CONFLICT (client_id, company_id) DO UPDATE SET
+           ON CONFLICT (client_id, company_id) DO ` +
+            (isNew || updateExisting
+              ? `UPDATE SET
              call_remarks = COALESCE(EXCLUDED.call_remarks, client_company_settings.call_remarks),
              hour_cost = COALESCE(EXCLUDED.hour_cost, client_company_settings.hour_cost),
              offline = COALESCE($5, client_company_settings.offline),
-             active = true`,
+             active = true`
+              : 'NOTHING'),
           [clientId, ctx.companyId, c.callRemarks, c.hourCost, c.offline],
         );
 
@@ -665,6 +683,7 @@ export function registerImporterRoutes(app: FastifyInstance, ctx: Ctx): void {
     });
 
     job.issues = issues;
+    await notifyShared(ctx, hub, 'client');
     await audit(ctx, 'clients.import', undefined, { file: job.fileName, ...stats, issues: issues.length }, req.ip);
     return { ...stats, issues: issues.slice(0, 200), issuesTotal: issues.length, token: job.token };
   });

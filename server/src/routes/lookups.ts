@@ -1,11 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { audit, type Ctx } from '../context.ts';
 import { badRequest, notFound } from '../errors.ts';
+import type { Hub } from '../http.ts';
 import { localName, msg } from '../i18n.ts';
 import {
   bodyOf,
   flag,
   idOf,
+  notifyCompany,
+  notifyShared,
   optBool,
   optInt,
   optNum,
@@ -87,7 +90,13 @@ interface LookupRow {
   active: boolean;
 }
 
-export function registerLookupsRoutes(app: FastifyInstance, ctx: Ctx): void {
+export function registerLookupsRoutes(app: FastifyInstance, ctx: Ctx, hub?: Hub): void {
+  /** ערך משותף מרענן את כל החברות; ערך של חברה אחת — רק אותה. */
+  const notify = async (row: { id: number; companyId: number | null }): Promise<void> => {
+    if (row.companyId === null) await notifyShared(ctx, hub, 'lookup', row.id);
+    else notifyCompany(ctx, hub, 'lookup', row.id);
+  };
+
   /** רק ערכים משותפים או של החברה הפעילה. זה הגדר שמונע הצצה לחברה אחרת. */
   const VISIBLE = '(l.company_id IS NULL OR l.company_id = $1)';
 
@@ -133,15 +142,26 @@ export function registerLookupsRoutes(app: FastifyInstance, ctx: Ctx): void {
     return out;
   }
 
-  /** ערך שמשמש כברירת מחדל בפרמטרים של החברה לא מושבת בשקט. */
-  async function guardDefaults(id: number): Promise<void> {
-    const { rows } = await ctx.db.query<{ key: string }>(
-      `SELECT key FROM settings
-        WHERE company_id = $1 AND key = 'params'
-          AND ((value->>'defaultStatusNew')::int = $2 OR (value->>'defaultStatusClose')::int = $2)`,
-      [ctx.companyId, id],
+  /**
+   * ערך שמשמש כברירת מחדל בפרמטרים לא מושבת בשקט, וסטטוס הסגירה לא מפסיק לסגור.
+   * ערך משותף יכול לשמש ברירת מחדל גם בחברה אחרת, ולכן הבדיקה היא על כל החברות;
+   * ההודעה לא אומרת באיזו חברה, כי זה כבר מידע של חברה אחרת.
+   */
+  async function guardDefaults(id: number, what: 'deactivate' | 'unclose'): Promise<void> {
+    const { rows } = await ctx.db.query<{ mine: boolean }>(
+      `SELECT (company_id = $1) AS mine FROM settings
+        WHERE key = 'params'
+          AND (value->>'defaultStatusClose' = $2::text
+               OR ($3 AND value->>'defaultStatusNew' = $2::text))
+        ORDER BY mine DESC LIMIT 1`,
+      [ctx.companyId, id, what === 'deactivate'],
     );
-    if (rows[0]) throw badRequest('הערך הזה מוגדר כברירת מחדל בפרמטרים של החברה. יש לשנות שם קודם');
+    if (!rows[0]) return;
+    throw badRequest(
+      rows[0].mine
+        ? 'הערך הזה מוגדר כברירת מחדל בפרמטרים של החברה. יש לשנות שם קודם'
+        : 'הערך הזה משותף, ומוגדר כברירת מחדל בחברה אחרת בקבוצה. אי אפשר לשנות אותו מכאן',
+    );
   }
 
   // ---- קריאה ----
@@ -212,7 +232,9 @@ export function registerLookupsRoutes(app: FastifyInstance, ctx: Ctx): void {
       keys.map((k) => values[k]),
     );
     await audit(ctx, 'lookup.create', String(rows[0]!.id), values, req.ip);
-    return one(rows[0]!.id);
+    const created = await one(rows[0]!.id);
+    await notify(created);
+    return created;
   });
 
   app.patch('/api/lookups/:id', async (req) => {
@@ -220,7 +242,8 @@ export function registerLookupsRoutes(app: FastifyInstance, ctx: Ctx): void {
     const id = idOf(req);
     const b = bodyOf(req);
     const current = await one(id);
-    if (b.active === false) await guardDefaults(id);
+    if (b.active === false) await guardDefaults(id, 'deactivate');
+    if (current.kind === 'call_status' && b.isClosing === false) await guardDefaults(id, 'unclose');
     const patch = patchSet(
       {
         name: b.name === undefined ? undefined : text(b.name, 'שם', 120),
@@ -239,6 +262,7 @@ export function registerLookupsRoutes(app: FastifyInstance, ctx: Ctx): void {
     );
     if (!rowCount) throw notFound(msg('notFound', ctx.lang));
     await audit(ctx, 'lookup.update', String(id), b, req.ip);
+    await notify(current);
     return one(id);
   });
 
@@ -258,6 +282,8 @@ export function registerLookupsRoutes(app: FastifyInstance, ctx: Ctx): void {
       }
     });
     await audit(ctx, 'lookup.reorder', kind, { ids }, req.ip);
+    // הסדר נוגע גם בערכים המשותפים של הסוג
+    await notifyShared(ctx, hub, 'lookup');
     return { ok: true };
   });
 
@@ -265,14 +291,15 @@ export function registerLookupsRoutes(app: FastifyInstance, ctx: Ctx): void {
   app.delete('/api/lookups/:id', async (req) => {
     requireAdmin(ctx);
     const id = idOf(req);
-    await one(id);
-    await guardDefaults(id);
+    const current = await one(id);
+    await guardDefaults(id, 'deactivate');
     const { rowCount } = await ctx.db.query(
       `UPDATE lookups l SET active = false WHERE l.id = $2 AND ${VISIBLE}`,
       [ctx.companyId, id],
     );
     if (!rowCount) throw notFound(msg('notFound', ctx.lang));
     await audit(ctx, 'lookup.deactivate', String(id), null, req.ip);
+    await notify(current);
     return { ok: true };
   });
 }

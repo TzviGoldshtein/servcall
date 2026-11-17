@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { audit, type Ctx } from '../context.ts';
 import { badRequest } from '../errors.ts';
-import { bodyOf, requireAdmin } from './departments.ts';
+import type { Hub } from '../http.ts';
+import { bodyOf, notifyCompany, requireAdmin } from './departments.ts';
 import type { LookupKind } from './lookups.ts';
 
 /**
@@ -202,7 +203,7 @@ export type ParamValues = Record<string, boolean | number | string | null>;
 export const paramDefaults = (): ParamValues =>
   Object.fromEntries(PARAM_FIELDS.map((f) => [f.key, f.default])) as ParamValues;
 
-export function registerParamsRoutes(app: FastifyInstance, ctx: Ctx): void {
+export function registerParamsRoutes(app: FastifyInstance, ctx: Ctx, hub?: Hub): void {
   async function load(): Promise<ParamValues> {
     const { rows } = await ctx.db.query<{ value: ParamValues }>(
       "SELECT value FROM settings WHERE company_id = $1 AND key = 'params'",
@@ -226,7 +227,8 @@ export function registerParamsRoutes(app: FastifyInstance, ctx: Ctx): void {
       return raw;
     }
     if (field.type === 'int') {
-      const n = Number(raw);
+      // רק מספר של ממש: Number(true) ו-Number('') היו נכנסים בשקט כ-1 וכ-0
+      const n = typeof raw === 'number' ? raw : NaN;
       const min = field.min ?? 0;
       const max = field.max ?? 100000;
       if (!Number.isInteger(n) || n < min || n > max) {
@@ -243,7 +245,7 @@ export function registerParamsRoutes(app: FastifyInstance, ctx: Ctx): void {
     }
     // lookup: המזהה חייב להיות ערך פעיל מהסוג הנכון, ובטווח הראייה של החברה
     if (raw === null || raw === '') return null;
-    const id = Number(raw);
+    const id = typeof raw === 'number' ? raw : NaN;
     if (!Number.isInteger(id) || id <= 0) throw badRequest(`${field.he}: בחירה לא תקינה`);
     const { rows } = await ctx.db.query<{ is_closing: boolean | null }>(
       `SELECT is_closing FROM lookups
@@ -283,7 +285,11 @@ export function registerParamsRoutes(app: FastifyInstance, ctx: Ctx): void {
   app.put('/api/params', async (req) => {
     requireAdmin(ctx);
     const b = bodyOf(req);
-    const incoming = (b.values && typeof b.values === 'object' ? b.values : b) as Record<string, unknown>;
+    const wrapped = b.values !== undefined;
+    if (wrapped && (b.values === null || typeof b.values !== 'object' || Array.isArray(b.values))) {
+      throw badRequest('מבנה הבקשה אינו תקין');
+    }
+    const incoming = (wrapped ? b.values : b) as Record<string, unknown>;
     const keys = Object.keys(incoming);
     if (!keys.length) throw badRequest('אין מה לעדכן');
 
@@ -300,7 +306,10 @@ export function registerParamsRoutes(app: FastifyInstance, ctx: Ctx): void {
        ON CONFLICT (company_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
       [ctx.companyId, JSON.stringify(next)],
     );
-    if (Object.keys(changes).length) await audit(ctx, 'params.update', undefined, changes, req.ip);
+    if (Object.keys(changes).length) {
+      await audit(ctx, 'params.update', undefined, changes, req.ip);
+      notifyCompany(ctx, hub, 'params');
+    }
     return { values: next, changed: Object.keys(changes) };
   });
 }
