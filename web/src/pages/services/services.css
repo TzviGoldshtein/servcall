@@ -1,0 +1,86 @@
+/*
+ * בנק שעות ושירותים חודשיים. כל הצבעים ממשתני ה-CSS; צבעי המצב (תקין / נמוך /
+ * חריגה) הם אסימוני הסטטוס הקבועים של calls.css, שאינם נגזרים מצבע החברה.
+ * מאפיינים לוגיים בלבד, כדי שעברית (RTL) ואנגלית (LTR) יעבדו מאותו קוד.
+ */
+.bank-meter {
+  inline-size: 100%;
+  min-inline-size: 120px;
+  block-size: 10px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+.bank-meter > span {
+  display: block;
+  block-size: 100%;
+  border-radius: 999px;
+  background: var(--status-closed, #2f6b3a);
+}
+.bank-meter[data-state='low'] > span {
+  background: var(--status-progress, #8a5a00);
+}
+.bank-meter[data-state='empty'] > span,
+.bank-meter[data-state='negative'] > span {
+  background: var(--status-overdue, #a32020);
+}
+.bank-pill {
+  border-radius: 999px;
+  padding: 1px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--status-closed-bg, #e8f2ea);
+  color: var(--status-closed, #2f6b3a);
+}
+.bank-pill[data-state='low'] {
+  background: var(--status-progress-bg, #fbf0dc);
+  color: var(--status-progress, #8a5a00);
+}
+.bank-pill[data-state='empty'],
+.bank-pill[data-state='negative'] {
+  background: var(--status-overdue-bg, #fbe9e9);
+  color: var(--status-overdue, #a32020);
+}
+.svc-num {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.svc-tabs {
+  display: flex;
+  gap: 4px;
+  border-block-end: 1px solid var(--border);
+}
+.svc-tabs button {
+  font: inherit;
+  background: none;
+  color: inherit;
+  border: 0;
+  border-block-end: 3px solid transparent;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.svc-tabs button[aria-selected='true'] {
+  border-block-end-color: var(--accent);
+  font-weight: 600;
+}
+.svc-kpis {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.svc-kpi {
+  flex: 1 1 160px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: var(--surface);
+}
+.svc-kpi b {
+  display: block;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.svc-scroll {
+  overflow-x: auto;
+}
