@@ -4,6 +4,7 @@ import { AppShell, TABS, isTab, type SideSection, type TabId } from './AppShell'
 import { CompanyPicker } from './CompanyPicker';
 import { IdleTimeout } from './IdleTimeout';
 import { Login } from './Login';
+import { CallsPage } from './pages/calls';
 import { applyLang, loadLang, saveLang, t } from './i18n';
 import { applyTheme, cacheTheme, loadMode, saveMode, themeOf, watchSystemMode, type Mode } from './theme';
 
@@ -128,10 +129,15 @@ export function App() {
         onSignOut={() => void signOut()}
         onLock={() => setLockAt(Date.now())}
       >
-        <div className="panel">
-          <h2>{t(lang, TABS.find((item) => item.id === tab)!.key)}</h2>
-          <p className="muted">{t(lang, 'comingSoon')}</p>
-        </div>
+        {tab === 'calls' ? (
+          // מודול הקריאות; המקטעים האחרים נבנים בנפרד
+          <CallsPage />
+        ) : (
+          <div className="panel">
+            <h2>{t(lang, TABS.find((item) => item.id === tab)!.key)}</h2>
+            <p className="muted">{t(lang, 'comingSoon')}</p>
+          </div>
+        )}
       </AppShell>
       <IdleTimeout
         lang={lang}
