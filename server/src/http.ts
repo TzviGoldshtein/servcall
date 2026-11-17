@@ -20,7 +20,21 @@ import {
   setRequestUser,
 } from './requestContext.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
+import { registerCallRoutes } from './routes/calls.ts';
 import { registerCompanyRoutes } from './routes/companies.ts';
+import { registerEventRoutes } from './routes/events.ts';
+import { registerFileRoutes } from './routes/files.ts';
+import { registerHourRoutes } from './routes/hours.ts';
+import { registerLinkRoutes } from './routes/links.ts';
+import { registerNoteRoutes } from './routes/notes.ts';
+import { registerSignatureRoutes } from './routes/signatures.ts';
+import { registerClientsRoutes } from './routes/clients.ts';
+import { registerContactsRoutes } from './routes/contacts.ts';
+import { registerDepartmentsRoutes } from './routes/departments.ts';
+import { registerImporterRoutes } from './routes/importer.ts';
+import { registerLookupsRoutes } from './routes/lookups.ts';
+import { registerParamsRoutes } from './routes/params.ts';
+import { registerUsersRoutes } from './routes/users.ts';
 
 /** הנתיבים שעובדים בלי סשן. כל השאר דורש התחברות, כולל /ws. */
 const PUBLIC_API = new Set([
@@ -128,6 +142,22 @@ export async function buildHttpServer(logger: Logger): Promise<FastifyInstance> 
 
   registerAuthRoutes(app, ctx, hub);
   registerCompanyRoutes(app, ctx, hub);
+  // מודול הקריאות: הרשימה והטופס, ומה שתלוי בקריאה. העדכונים החיים יוצאים דרך ה-hub
+  registerCallRoutes(app, ctx, hub);
+  registerEventRoutes(app, ctx, hub);
+  registerHourRoutes(app, ctx, hub);
+  registerFileRoutes(app, ctx, hub);
+  registerSignatureRoutes(app, ctx, hub);
+  registerLinkRoutes(app, ctx, hub);
+  registerNoteRoutes(app, ctx, hub);
+  // נתוני הבסיס המשותפים לארבע החברות (תחזוקה)
+  registerDepartmentsRoutes(app, ctx, hub);
+  registerUsersRoutes(app, ctx, hub);
+  registerClientsRoutes(app, ctx, hub);
+  registerContactsRoutes(app, ctx, hub);
+  registerLookupsRoutes(app, ctx, hub);
+  registerParamsRoutes(app, ctx, hub);
+  registerImporterRoutes(app, ctx, hub);
 
   app.setNotFoundHandler((req, reply) => {
     const path = req.url.split('?')[0]!;
