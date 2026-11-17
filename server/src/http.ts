@@ -135,14 +135,14 @@ export async function buildHttpServer(logger: Logger): Promise<FastifyInstance> 
 
   registerAuthRoutes(app, ctx, hub);
   registerCompanyRoutes(app, ctx, hub);
-  // מודול הקריאות: הרשימה והטופס, ומה שתלוי בקריאה
-  registerCallRoutes(app, ctx);
-  registerEventRoutes(app, ctx);
-  registerHourRoutes(app, ctx);
-  registerFileRoutes(app, ctx);
-  registerSignatureRoutes(app, ctx);
-  registerLinkRoutes(app, ctx);
-  registerNoteRoutes(app, ctx);
+  // מודול הקריאות: הרשימה והטופס, ומה שתלוי בקריאה. העדכונים החיים יוצאים דרך ה-hub
+  registerCallRoutes(app, ctx, hub);
+  registerEventRoutes(app, ctx, hub);
+  registerHourRoutes(app, ctx, hub);
+  registerFileRoutes(app, ctx, hub);
+  registerSignatureRoutes(app, ctx, hub);
+  registerLinkRoutes(app, ctx, hub);
+  registerNoteRoutes(app, ctx, hub);
 
   app.setNotFoundHandler((req, reply) => {
     const path = req.url.split('?')[0]!;

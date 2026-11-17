@@ -25,6 +25,7 @@ import {
   idParam,
   loadParams,
   nameExpr,
+  notifyCall,
   optionalId,
   optionalText,
   personExpr,
@@ -34,6 +35,7 @@ import {
   text,
   withDb,
   type CallRecord,
+  type Live,
 } from './calls.ts';
 
 const KINDS = new Set(['child', 'shared', 'transfer']);
@@ -87,7 +89,7 @@ const companyName = async (ctx: Ctx, companyId: number): Promise<string> => {
   return rows[0]?.name ?? String(companyId);
 };
 
-export function registerLinkRoutes(app: FastifyInstance, ctx: Ctx): void {
+export function registerLinkRoutes(app: FastifyInstance, ctx: Ctx, hub: Live): void {
   const { db } = ctx;
 
   /**
@@ -169,7 +171,7 @@ export function registerLinkRoutes(app: FastifyInstance, ctx: Ctx): void {
     const reason = optionalText(body.reason, 'סיבת ההעברה', 2000);
     const relayAllowed = body.relayAllowed === true;
 
-    return db.tx(async (tx) => {
+    const result = await db.tx(async (tx) => {
       const txCtx = withDb(ctx, tx);
       let child: CallRecord | null = null;
       if (kind !== 'shared') {
@@ -221,6 +223,10 @@ export function registerLinkRoutes(app: FastifyInstance, ctx: Ctx): void {
       await audit(txCtx, 'call.link.create', String(call.id), { linkId, kind, toCompanyId, childId: child?.id });
       return { id: linkId, kind, childCallId: child?.id ?? null, childNumber: child?.number ?? null };
     });
+    // שני הצדדים שומעים: השולחת על הקישור, המקבלת על הקריאה שנחתה אצלה
+    await notifyCall(db, hub, call.id, 'linked');
+    if (result.childCallId) await notifyCall(db, hub, result.childCallId, 'created');
+    return result;
   });
 
   /** הצד המקבל מאשר שהוא לוקח את העבודה. */
@@ -235,6 +241,8 @@ export function registerLinkRoutes(app: FastifyInstance, ctx: Ctx): void {
     );
     await systemEvent(db, call.id, 'ההעברה אושרה על ידי החברה המקבלת', ctx.user.id);
     await audit(ctx, 'call.link.accept', String(call.id), { linkId: link.id });
+    await notifyCall(db, hub, link.parent_call_id, 'linked');
+    if (link.child_call_id) await notifyCall(db, hub, link.child_call_id, 'linked');
     return { ok: true };
   });
 
@@ -323,6 +331,9 @@ export function registerLinkRoutes(app: FastifyInstance, ctx: Ctx): void {
       ctx.user.id,
     );
     await audit(ctx, 'call.relay.request', String(call.id), { requestId: rows[0]!.id, linkId: link.id, channel });
+    // הבקשה עולה אצל נציגי החברה המקורית — הם אלה שמאשרים
+    hub.broadcast(link.parent_company_id, { t: 'relay', requestId: rows[0]!.id, callId: link.parent_call_id });
+    await notifyCall(db, hub, call.id, 'relay');
     return { id: rows[0]!.id, status: 'pending' };
   });
 
@@ -357,7 +368,7 @@ export function registerLinkRoutes(app: FastifyInstance, ctx: Ctx): void {
     if (request.status !== 'pending') throw badRequest('הבקשה כבר טופלה');
     const note = optionalText((req.body as { note?: unknown }).note, 'הערה', 2000);
 
-    return db.tx(async (tx) => {
+    const result = await db.tx(async (tx) => {
       const txCtx = withDb(ctx, tx);
       const { rows } = await tx.query<{ address: string | null; allowed: boolean }>(
         'SELECT CASE WHEN $2 = \'whatsapp\' THEN coalesce(ct.mobile_e164, ct.mobile, cl.mobile) ' +
@@ -406,6 +417,9 @@ export function registerLinkRoutes(app: FastifyInstance, ctx: Ctx): void {
       });
       return { ok: true, queued: outboxId !== null, blocked: outboxId !== null && !allowed };
     });
+    await notifyCall(db, hub, request.parent_call_id, 'relay');
+    await notifyCall(db, hub, request.call_id, 'relay');
+    return result;
   });
 
   app.post('/api/relay-requests/:requestId/reject', async (req) => {
@@ -426,6 +440,8 @@ export function registerLinkRoutes(app: FastifyInstance, ctx: Ctx): void {
       ctx.user.id,
     );
     await audit(ctx, 'call.relay.reject', String(request.parent_call_id), { requestId: request.id });
+    await notifyCall(db, hub, request.parent_call_id, 'relay');
+    await notifyCall(db, hub, request.call_id, 'relay');
     return { ok: true };
   });
 }

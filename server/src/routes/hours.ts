@@ -13,7 +13,17 @@ import type { Ctx } from '../context.ts';
 import { audit } from '../context.ts';
 import { badRequest, forbidden, notFound } from '../errors.ts';
 import { msg } from '../i18n.ts';
-import { idParam, lookupOf, optionalId, optionalText, personExpr, requireCall, requireRole } from './calls.ts';
+import {
+  idParam,
+  lookupOf,
+  notifyCall,
+  optionalId,
+  optionalText,
+  personExpr,
+  requireCall,
+  requireRole,
+  type Live,
+} from './calls.ts';
 
 interface HourRow {
   id: number;
@@ -41,7 +51,7 @@ const timeOf = (value: unknown): string | null => {
   return value;
 };
 
-export function registerHourRoutes(app: FastifyInstance, ctx: Ctx): void {
+export function registerHourRoutes(app: FastifyInstance, ctx: Ctx, hub: Live): void {
   const { db } = ctx;
 
   app.get('/api/calls/:id/hours', async (req) => {
@@ -100,6 +110,7 @@ export function registerHourRoutes(app: FastifyInstance, ctx: Ctx): void {
       ],
     );
     await audit(ctx, 'call.hours.add', String(call.id), { hourId: rows[0]!.id });
+    await notifyCall(db, hub, call.id, 'hours');
     return { id: rows[0]!.id };
   });
 
@@ -144,6 +155,7 @@ export function registerHourRoutes(app: FastifyInstance, ctx: Ctx): void {
       ],
     );
     await audit(ctx, 'call.hours.edit', String(call.id), { hourId: row.id });
+    await notifyCall(db, hub, call.id, 'hours');
     return { ok: true };
   });
 
@@ -153,6 +165,7 @@ export function registerHourRoutes(app: FastifyInstance, ctx: Ctx): void {
     const row = await requireHour(ctx, call.id, idParam(req, 'hourId'));
     await db.query('DELETE FROM call_hours WHERE id = $1', [row.id]);
     await audit(ctx, 'call.hours.delete', String(call.id), { hourId: row.id });
+    await notifyCall(db, hub, call.id, 'hours');
     return { ok: true };
   });
 

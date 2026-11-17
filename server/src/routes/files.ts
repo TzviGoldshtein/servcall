@@ -8,19 +8,18 @@
  * מחיקה אינה הדרך: ברירת המחדל היא כיבוי (`active = false`), והקובץ נמחק
  * מהדיסק רק כשמנהל מבקש זאת במפורש.
  */
-import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, rm, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { mkdir, rename, rm, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { pipeline } from 'node:stream/promises';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import type { Multipart } from '@fastify/multipart';
 import { config } from '../config.ts';
 import type { Ctx } from '../context.ts';
 import { audit } from '../context.ts';
-import { HttpError, badRequest, notFound } from '../errors.ts';
+import { badRequest, notFound } from '../errors.ts';
 import { msg } from '../i18n.ts';
-import { idParam, optionalText, personExpr, requireCall, requireRole } from './calls.ts';
+import { readUpload } from '../uploads.ts';
+import { idParam, notifyCall, optionalText, personExpr, requireCall, requireRole, type Live } from './calls.ts';
 
 interface FileRow {
   id: number;
@@ -54,43 +53,33 @@ const extensionOf = (mime: string, fileName: string): string => {
   return EXTENSION[mime] ?? 'bin';
 };
 
-/** שומר את הקובץ היחיד שבבקשה, ומחזיר את הנתיב היחסי ואת השדות שנשלחו איתו. */
+/**
+ * קורא את הבקשה דרך `readUpload` של הליבה (קובץ אחד, לדיסק ולא לזיכרון, עם
+ * מגבלת הגודל), ומעביר את הקובץ מהתיקייה הזמנית לתיקייה של הקריאה.
+ */
 async function saveUpload(
   req: FastifyRequest,
   companyId: number,
   callId: number,
 ): Promise<{ relative: string; fileName: string; mime: string; size: number; fields: Record<string, string> }> {
-  const folder = folderOf(companyId, callId);
-  await mkdir(join(config.mediaDir, folder), { recursive: true });
-  const fields: Record<string, string> = {};
-  let saved: { relative: string; fileName: string; mime: string; size: number } | undefined;
-
-  for await (const part of req.parts() as AsyncIterableIterator<Multipart>) {
-    if (part.type === 'field') {
-      if (typeof part.value === 'string') fields[part.fieldname] = part.value;
-      continue;
-    }
-    if (saved) {
-      // קובץ אחד בכל בקשה; השאר נזרקים כדי שהזרם לא ייתקע
-      part.file.resume();
-      continue;
-    }
-    const fileName = part.filename || 'file';
-    const relative = join(folder, `${randomUUID()}.${extensionOf(part.mimetype, fileName)}`);
-    const absolute = join(config.mediaDir, relative);
-    await pipeline(part.file, createWriteStream(absolute));
-    if (part.file.truncated) {
-      await rm(absolute, { force: true });
-      throw new HttpError(413, `הקובץ גדול מדי (מעל ${config.maxUploadMb}MB)`);
-    }
-    const info = await stat(absolute);
-    saved = { relative, fileName, mime: part.mimetype, size: info.size };
+  const upload = await readUpload(req);
+  if (!upload.file) throw badRequest('לא נשלח קובץ');
+  const { tempFile, mime, fileName } = upload.file;
+  try {
+    const folder = folderOf(companyId, callId);
+    await mkdir(join(config.mediaDir, folder), { recursive: true });
+    const relative = join(folder, `${randomUUID()}.${extensionOf(mime, fileName)}`);
+    // אותה מחיצה (MEDIA_DIR), ולכן rename ולא העתקה
+    await rename(tempFile, join(config.mediaDir, relative));
+    const info = await stat(join(config.mediaDir, relative));
+    return { relative, fileName, mime, size: info.size, fields: upload.fields };
+  } catch (err) {
+    await rm(tempFile, { force: true });
+    throw err;
   }
-  if (!saved) throw badRequest('לא נשלח קובץ');
-  return { ...saved, fields };
 }
 
-export function registerFileRoutes(app: FastifyInstance, ctx: Ctx): void {
+export function registerFileRoutes(app: FastifyInstance, ctx: Ctx, hub: Live): void {
   const { db } = ctx;
 
   app.get('/api/calls/:id/files', async (req) => {
@@ -125,6 +114,7 @@ export function registerFileRoutes(app: FastifyInstance, ctx: Ctx): void {
       ],
     );
     await audit(ctx, 'call.file.add', String(call.id), { fileId: rows[0]!.id, name: upload.fileName });
+    await notifyCall(db, hub, call.id, 'files');
     return { id: rows[0]!.id };
   });
 
@@ -158,6 +148,7 @@ export function registerFileRoutes(app: FastifyInstance, ctx: Ctx): void {
       [row.id, optionalText(body.description, 'תאור', 500), typeof body.active === 'boolean' ? body.active : null],
     );
     await audit(ctx, 'call.file.edit', String(call.id), { fileId: row.id, body });
+    await notifyCall(db, hub, call.id, 'files');
     return { ok: true };
   });
 
@@ -173,12 +164,14 @@ export function registerFileRoutes(app: FastifyInstance, ctx: Ctx): void {
     if (!purge) {
       await db.query('UPDATE call_files SET active = false WHERE id = $1', [row.id]);
       await audit(ctx, 'call.file.deactivate', String(call.id), { fileId: row.id });
+      await notifyCall(db, hub, call.id, 'files');
       return { ok: true, purged: false };
     }
     requireRole(ctx, 'admin');
     await db.query('DELETE FROM call_files WHERE id = $1', [row.id]);
     await rm(join(config.mediaDir, row.file_path), { force: true });
     await audit(ctx, 'call.file.delete', String(call.id), { fileId: row.id });
+    await notifyCall(db, hub, call.id, 'files');
     return { ok: true, purged: true };
   });
 }

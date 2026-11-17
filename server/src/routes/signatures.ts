@@ -20,12 +20,14 @@ import { msg } from '../i18n.ts';
 import {
   idParam,
   loadParams,
+  notifyCall,
   optionalText,
   requireCall,
   requireRole,
   systemEvent,
   text,
   withDb,
+  type Live,
 } from './calls.ts';
 
 interface SignatureRow {
@@ -49,7 +51,7 @@ function decodeSignature(value: unknown): Buffer {
   return bytes;
 }
 
-export function registerSignatureRoutes(app: FastifyInstance, ctx: Ctx): void {
+export function registerSignatureRoutes(app: FastifyInstance, ctx: Ctx, hub: Live): void {
   const { db } = ctx;
 
   app.get('/api/calls/:id/signatures', async (req) => {
@@ -78,7 +80,7 @@ export function registerSignatureRoutes(app: FastifyInstance, ctx: Ctx): void {
     const relative = join(folder, `${randomUUID()}.png`);
     await writeFile(join(config.mediaDir, relative), bytes);
 
-    return db.tx(async (tx) => {
+    const saved = await db.tx(async (tx) => {
       const txCtx = withDb(ctx, tx);
       const { rows } = await tx.query<{ id: number }>(
         'INSERT INTO call_signatures (call_id, description, signer_name, remarks, image_path) ' +
@@ -93,6 +95,8 @@ export function registerSignatureRoutes(app: FastifyInstance, ctx: Ctx): void {
       await audit(txCtx, 'call.signature.add', String(call.id), { signatureId: rows[0]!.id, signerName });
       return { id: rows[0]!.id };
     });
+    await notifyCall(db, hub, call.id, 'signature');
+    return saved;
   });
 
   app.get('/api/calls/:id/signatures/:signatureId/image', async (req, reply) => {
@@ -120,6 +124,7 @@ export function registerSignatureRoutes(app: FastifyInstance, ctx: Ctx): void {
     await db.query('DELETE FROM call_signatures WHERE id = $1', [row.id]);
     await rm(join(config.mediaDir, row.image_path), { force: true });
     await audit(ctx, 'call.signature.delete', String(call.id), { signatureId: row.id });
+    await notifyCall(db, hub, call.id, 'signature');
     return { ok: true };
   });
 }

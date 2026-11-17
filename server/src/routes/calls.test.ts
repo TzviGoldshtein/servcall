@@ -83,6 +83,10 @@ class FakeDb implements Db {
       return [{ number }];
     }
     if (has("key = 'params'")) return [{ value: PARAMS }];
+    // ההפניות של הקריאה (לקוח, איש קשר, גורם מטפל) קיימות בעולם של הבדיקה
+    if (has('FROM clients WHERE id = $1 AND active')) return [{ id: p[0] }];
+    if (has('FROM contacts WHERE id = $1 AND client_id = $2')) return [{ id: p[0] }];
+    if (has('FROM user_companies WHERE user_id = $1 AND company_id = $2')) return [{ user_id: p[0] }];
     if (has('FROM lookups') && has('WHERE id = $1 AND kind = $2')) {
       const row = LOOKUPS.find((l) => l.id === p[0] && l.kind === p[1]);
       return row ? [row] : [];
@@ -348,7 +352,7 @@ test('העברת עבודה פותחת קריאת בת ממוספרת ברצף �
   assert.equal(parent.number, 1, 'הקריאה הראשונה של קי טלקום');
 
   const app = new FakeApp();
-  registerLinkRoutes(app as never, ctx);
+  registerLinkRoutes(app as never, ctx, { broadcast() {} });
   const result = (await app.call('POST /api/calls/:id/links', {
     params: { id: String(parent.id) },
     body: {
@@ -393,7 +397,7 @@ test('קריאה משותפת אינה פותחת קריאה שנייה ואינ
   const ctx = ctxFor(db, 1);
   const parent = await createCall(ctx, 1, { clientId: 3, subject: 'פרויקט משותף', typeId: 20, durationId: 30 });
   const app = new FakeApp();
-  registerLinkRoutes(app as never, ctx);
+  registerLinkRoutes(app as never, ctx, { broadcast() {} });
   const result = (await app.call('POST /api/calls/:id/links', {
     params: { id: String(parent.id) },
     body: { kind: 'shared', toCompanyId: 4, reason: 'עבודה משותפת' },

@@ -16,11 +16,13 @@ import { msg } from '../i18n.ts';
 import {
   closeCall,
   idParam,
+  notifyCall,
   personExpr,
   requireCall,
   requireRole,
   text,
   withDb,
+  type Live,
 } from './calls.ts';
 
 interface EventRow {
@@ -30,7 +32,7 @@ interface EventRow {
   created_by: number | null;
 }
 
-export function registerEventRoutes(app: FastifyInstance, ctx: Ctx): void {
+export function registerEventRoutes(app: FastifyInstance, ctx: Ctx, hub: Live): void {
   const { db } = ctx;
 
   app.get('/api/calls/:id/events', async (req) => {
@@ -57,7 +59,7 @@ export function registerEventRoutes(app: FastifyInstance, ctx: Ctx): void {
     const content = text(body.body, 'תאור האירוע', 20_000);
     const close = body.close === true;
 
-    return db.tx(async (tx) => {
+    const saved = await db.tx(async (tx) => {
       const txCtx = withDb(ctx, tx);
       const { rows } = await tx.query<{ id: number }>(
         "INSERT INTO call_events (call_id, body, kind, created_by) VALUES ($1, $2, 'note', $3) RETURNING id",
@@ -74,6 +76,8 @@ export function registerEventRoutes(app: FastifyInstance, ctx: Ctx): void {
       await audit(txCtx, 'call.event.add', String(call.id), { eventId: rows[0]!.id, close });
       return { id: rows[0]!.id, closed: close };
     });
+    await notifyCall(db, hub, call.id, close ? 'closed' : 'event');
+    return saved;
   });
 
   /** עריכת הערה: הכותב עצמו או מנהל. אירוע מערכת הוא תיעוד ואינו נערך. */
@@ -88,6 +92,7 @@ export function registerEventRoutes(app: FastifyInstance, ctx: Ctx): void {
     const content = text((req.body as { body?: unknown }).body, 'תאור האירוע', 20_000);
     await db.query('UPDATE call_events SET body = $2 WHERE id = $1', [event.id, content]);
     await audit(ctx, 'call.event.edit', String(call.id), { eventId: event.id });
+    await notifyCall(db, hub, call.id, 'event');
     return { ok: true };
   });
 
@@ -105,6 +110,7 @@ export function registerEventRoutes(app: FastifyInstance, ctx: Ctx): void {
     }
     await db.query('DELETE FROM call_events WHERE id = $1', [event.id]);
     await audit(ctx, 'call.event.delete', String(call.id), { eventId: event.id });
+    await notifyCall(db, hub, call.id, 'event');
     return { ok: true };
   });
 }

@@ -14,7 +14,7 @@ import type { Ctx } from '../context.ts';
 import { audit } from '../context.ts';
 import { badRequest, forbidden, notFound } from '../errors.ts';
 import { msg } from '../i18n.ts';
-import { idParam, optionalId, personExpr, requireCall, requireRole, text } from './calls.ts';
+import { idParam, optionalId, personExpr, requireCall, requireRole, text, type Live } from './calls.ts';
 
 type NoteKind = 'card' | 'sticky';
 
@@ -62,8 +62,19 @@ const SELECT_NOTE =
   'LEFT JOIN users pf ON pf.id = n.pinned_for ' +
   'LEFT JOIN users db_ ON db_.id = n.done_by ';
 
-export function registerNoteRoutes(app: FastifyInstance, ctx: Ctx): void {
+export function registerNoteRoutes(app: FastifyInstance, ctx: Ctx, hub: Live): void {
   const { db } = ctx;
+
+  /**
+   * פתק הוא של החברה הפעילה; הערת כרטיס היא של כל הקבוצה, ולכן נשמעת בכל
+   * החברות. ההודעה נושאת מזהים בלבד — התוכן נשלף בבקשה רגילה.
+   */
+  const announce = async (note: { id: number; kind: NoteKind; client_id: number | null; call_id: number | null; pinned_for: number | null }) => {
+    const event = { t: 'note', noteId: note.id, kind: note.kind, clientId: note.client_id, callId: note.call_id, pinnedFor: note.pinned_for };
+    if (note.kind === 'sticky') return hub.broadcast(ctx.companyId, event);
+    const { rows } = await db.query<{ id: number }>('SELECT id FROM companies WHERE active');
+    for (const company of rows) hub.broadcast(company.id, event);
+  };
 
   /**
    * הערות לפי לקוח או לפי קריאה. הערות כרטיס משותפות לכל החברות; פתקים מוצגים
@@ -150,6 +161,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: Ctx): void {
       ],
     );
     await audit(ctx, 'note.create', String(rows[0]!.id), { kind, clientId, callId, pinnedFor });
+    await announce({ id: rows[0]!.id, kind, client_id: clientId, call_id: callId, pinned_for: pinnedFor });
     return { id: rows[0]!.id };
   });
 
@@ -180,6 +192,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: Ctx): void {
       ],
     );
     await audit(ctx, 'note.edit', String(note.id), { kind: note.kind });
+    await announce(note);
     return { ok: true };
   });
 
@@ -195,6 +208,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: Ctx): void {
       [note.id, done, ctx.user.id],
     );
     await audit(ctx, done ? 'note.done' : 'note.undone', String(note.id));
+    await announce(note);
     return { ok: true, done };
   });
 
@@ -209,6 +223,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: Ctx): void {
     }
     await db.query('DELETE FROM notes WHERE id = $1', [note.id]);
     await audit(ctx, 'note.delete', String(note.id), { kind: note.kind });
+    await announce(note);
     return { ok: true };
   });
 }

@@ -17,7 +17,9 @@ import type { Ctx } from '../context.ts';
 import { audit, can } from '../context.ts';
 import type { Db } from '../db.ts';
 import { HttpError, badRequest, forbidden, notFound } from '../errors.ts';
-import { msg, type Lang } from '../i18n.ts';
+import type { Hub } from '../http.ts';
+import { msg } from '../i18n.ts';
+import { optionalText, text } from '../validate.ts';
 
 // ---------------------------------------------------------------- עזרי בקשה
 
@@ -26,15 +28,8 @@ export function requireRole(ctx: Ctx, need: Parameters<typeof can>[1]): void {
   if (!can(ctx.role, need)) throw forbidden(msg('forbidden', ctx.lang));
 }
 
-export function text(value: unknown, field: string, max = 10_000): string {
-  if (typeof value !== 'string' || !value.trim()) throw badRequest(`חסר שדה: ${field}`);
-  if (value.length > max) throw badRequest(`השדה ${field} ארוך מדי`);
-  return value.trim();
-}
-
-export function optionalText(value: unknown, field: string, max = 10_000): string | null {
-  return value === undefined || value === null || value === '' ? null : text(value, field, max);
-}
+// עזרי האימות של הליבה; מיוצאים מכאן כדי ששאר ראוטי הקריאה ייבאו ממקום אחד
+export { optionalText, text };
 
 /** מספר שלם חיובי מגוף הבקשה או מה-query. undefined = לא נשלח, null = נוקה במפורש. */
 export function optionalId(value: unknown, field: string): number | null | undefined {
@@ -83,6 +78,32 @@ export const nameExpr = (alias: string, langParam: string): string =>
 
 export const personExpr = (alias: string): string =>
   `nullif(trim(coalesce(${alias}.first_name,'') || ' ' || coalesce(${alias}.last_name,'')), '')`;
+
+// ---------------------------------------------------------------- עדכונים חיים
+
+/** מה שהראוטים צריכים מה-Hub: שידור לחברה. רשימת החיבורים נשארת אצלו. */
+export type Live = Pick<Hub, 'broadcast'>;
+
+/** החברות שרואות את הקריאה: בעלת הקריאה, ומי שהיא שותפה איתה. */
+export async function audienceOf(db: Db, callId: number): Promise<number[]> {
+  const { rows } = await db.query<{ companyId: number }>(
+    'SELECT sc.company_id AS "companyId" FROM service_calls sc WHERE sc.id = $1 ' +
+      "UNION SELECT kl.to_company_id FROM call_links kl WHERE kl.parent_call_id = $1 AND kl.kind = 'shared'",
+    [callId],
+  );
+  return rows.map((r) => r.companyId);
+}
+
+/**
+ * מודיע למסכים הפתוחים שקריאה השתנתה. נקרא אחרי שהטרנזקציה נסגרה, כדי שמי
+ * שמרענן בעקבות ההודעה יראה את המצב החדש. ההודעה נושאת מזהה בלבד — התוכן נשלף
+ * בבקשה רגילה, עם בדיקת ההרשאה שלה, ולכן אין כאן מה שידלוף בין חברות.
+ */
+export async function notifyCall(db: Db, hub: Live, callId: number, what: string): Promise<void> {
+  for (const companyId of await audienceOf(db, callId)) {
+    hub.broadcast(companyId, { t: 'call', callId, what });
+  }
+}
 
 // ---------------------------------------------------------------- פרמטרי חברה
 
@@ -251,6 +272,37 @@ export async function lookupOf(db: Db, companyId: number, id: number, kind: stri
 const isClosing = async (db: Db, companyId: number, statusId: number): Promise<boolean> =>
   (await lookupOf(db, companyId, statusId, 'call_status')).is_closing === true;
 
+/**
+ * מאמת את מה שהקריאה מצביעה עליו לפני הכתיבה: לקוח פעיל, איש קשר של אותו לקוח,
+ * וגורם מטפל שמשויך לחברה של הקריאה. בלי זה הפניה שגויה הייתה נופלת כשגיאת
+ * מסד, או גרוע מזה — נשמרת (איש קשר של לקוח אחר).
+ */
+export async function assertRefs(
+  db: Db,
+  companyId: number,
+  refs: { clientId?: number | null; contactId?: number | null; ownerUserId?: number | null },
+  clientIdOfCall: number,
+): Promise<void> {
+  if (refs.clientId != null) {
+    const { rows } = await db.query('SELECT id FROM clients WHERE id = $1 AND active', [refs.clientId]);
+    if (!rows[0]) throw badRequest('הלקוח לא נמצא או אינו פעיל');
+  }
+  if (refs.contactId != null) {
+    const { rows } = await db.query('SELECT id FROM contacts WHERE id = $1 AND client_id = $2', [
+      refs.contactId,
+      clientIdOfCall,
+    ]);
+    if (!rows[0]) throw badRequest('איש הקשר אינו שייך ללקוח של הקריאה');
+  }
+  if (refs.ownerUserId != null) {
+    const { rows } = await db.query(
+      'SELECT user_id FROM user_companies WHERE user_id = $1 AND company_id = $2 AND active',
+      [refs.ownerUserId, companyId],
+    );
+    if (!rows[0]) throw badRequest('הגורם המטפל אינו משויך לחברה של הקריאה');
+  }
+}
+
 // ------------------------------------------------------------ שעות אוטומטיות
 
 /** התיאור של שורת השעות שנוצרת ממשך הטיפול. מזוהה גם לפי `auto = true`. */
@@ -382,6 +434,7 @@ export async function createCall(
   if (full.typeId) await lookupOf(db, companyId, full.typeId, 'call_type');
   if (full.billingStatusId) await lookupOf(db, companyId, full.billingStatusId, 'billing_status');
   if (full.durationId) await lookupOf(db, companyId, full.durationId, 'duration');
+  await assertRefs(db, companyId, { clientId, contactId: full.contactId, ownerUserId: full.ownerUserId }, clientId);
 
   // המספר נלקח מהרצף של החברה בתוך אותה טרנזקציה — ראה allocateNumber
   const number = await allocateNumber(db, companyId);
@@ -451,6 +504,11 @@ export async function closeCall(ctx: Ctx, call: CallRecord): Promise<void> {
 
 // ------------------------------------------------------------ רשימת הקריאות
 
+const dayOf = (value: string): string => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw badRequest('תאריך לא תקין');
+  return value;
+};
+
 const SORTABLE: Record<string, string> = {
   number: 'sc.number',
   client: 'cl.name',
@@ -508,30 +566,32 @@ async function listCalls(ctx: Ctx, query: ListQuery, params: Params, limit: numb
   const values: unknown[] = [ctx.lang, ctx.companyId, params.markDelayMinutes];
   const where: string[] = [CALL_VISIBLE];
   const add = (value: unknown): string => `$${values.push(value)}`;
+  // מזהה שהגיע בכתובת: ערך שאינו מספר הוא 400 ולא שגיאת מסד
+  const idOf = (value: string, field: string): string => add(requiredId(value, field));
 
   const openOnly = optionalBool(query.open) ?? params.listShowOnlyOpen;
   if (openOnly) where.push('sc.closed_at IS NULL AND st.is_closing IS NOT TRUE');
 
   if (query.number) where.push(`sc.number::text LIKE ${add(query.number.trim() + '%')}`);
-  if (query.clientId) where.push(`sc.client_id = ${add(Number(query.clientId))}`);
+  if (query.clientId) where.push(`sc.client_id = ${idOf(query.clientId, 'לקוח')}`);
   if (query.client) where.push(`cl.name ILIKE ${add('%' + query.client.trim() + '%')}`);
-  if (query.contactId) where.push(`sc.contact_id = ${add(Number(query.contactId))}`);
+  if (query.contactId) where.push(`sc.contact_id = ${idOf(query.contactId, 'איש קשר')}`);
   if (query.ownerUserId) {
     where.push(
       query.ownerUserId === 'none'
         ? 'sc.owner_user_id IS NULL'
-        : `sc.owner_user_id = ${add(Number(query.ownerUserId))}`,
+        : `sc.owner_user_id = ${idOf(query.ownerUserId, 'גורם מטפל')}`,
     );
   }
-  if (query.typeId) where.push(`sc.type_id = ${add(Number(query.typeId))}`);
-  if (query.statusId) where.push(`sc.status_id = ${add(Number(query.statusId))}`);
-  if (query.billingStatusId) where.push(`sc.billing_status_id = ${add(Number(query.billingStatusId))}`);
-  if (query.durationId) where.push(`sc.duration_id = ${add(Number(query.durationId))}`);
+  if (query.typeId) where.push(`sc.type_id = ${idOf(query.typeId, 'סוג קריאה')}`);
+  if (query.statusId) where.push(`sc.status_id = ${idOf(query.statusId, 'סטטוס')}`);
+  if (query.billingStatusId) where.push(`sc.billing_status_id = ${idOf(query.billingStatusId, 'סטטוס חיוב')}`);
+  if (query.durationId) where.push(`sc.duration_id = ${idOf(query.durationId, 'משך טיפול')}`);
   if (query.subject) where.push(`sc.subject ILIKE ${add('%' + query.subject.trim() + '%')}`);
   if (query.details) where.push(`sc.details ILIKE ${add('%' + query.details.trim() + '%')}`);
   if (query.source) where.push(`sc.source = ${add(query.source)}`);
-  if (query.from) where.push(`sc.open_at >= ${add(query.from)}::timestamptz`);
-  if (query.to) where.push(`sc.open_at < (${add(query.to)}::date + 1)`);
+  if (query.from) where.push(`sc.open_at >= ${add(dayOf(query.from))}::date`);
+  if (query.to) where.push(`sc.open_at < (${add(dayOf(query.to))}::date + 1)`);
   // חיפוש חופשי: מספר, נושא, תאור או שם לקוח
   if (query.q) {
     const q = add('%' + query.q.trim() + '%');
@@ -634,7 +694,7 @@ async function exportExcel(ctx: Ctx, query: ListQuery, params: Params): Promise<
 
 // ------------------------------------------------------------ הראוטים
 
-export function registerCallRoutes(app: FastifyInstance, ctx: Ctx): void {
+export function registerCallRoutes(app: FastifyInstance, ctx: Ctx, hub: Live): void {
   const { db } = ctx;
 
   /** טבלאות הקוד, הפרמטרים והנציגים של החברה — מה שהטופס והרשימה צריכים. */
@@ -657,6 +717,47 @@ export function registerCallRoutes(app: FastifyInstance, ctx: Ctx): void {
       [ctx.companyId],
     );
     return { params, lookups: lookups.rows, agents: agents.rows, companies: companies.rows, pageSize: PAGE_SIZE };
+  });
+
+  /**
+   * חיפוש לקוח לטופס הקריאה: לפי שם, טלפון או מספר לקוח. הלקוחות משותפים לכל
+   * החברות; ההערה האדומה וגורם ברירת המחדל הם של החברה הפעילה.
+   */
+  app.get('/api/calls/clients', async (req) => {
+    const q = String((req.query as { q?: string }).q ?? '').trim().slice(0, 100);
+    const digits = q.replace(/\D/g, '');
+    const { rows } = await db.query(
+      'SELECT cl.id, cl.name, cl.phone, cl.city, ccs.call_remarks AS "callRemarks", ' +
+        'ccs.default_owner_id AS "defaultOwnerId" ' +
+        'FROM clients cl ' +
+        'LEFT JOIN client_company_settings ccs ON ccs.client_id = cl.id AND ccs.company_id = $1 ' +
+        "WHERE cl.active AND ($2 = '' OR cl.name ILIKE '%' || $2 || '%' OR cl.id::text = $2 " +
+        "  OR ($3 <> '' AND regexp_replace(coalesce(cl.phone,'') || coalesce(cl.mobile,''), '[^0-9]', '', 'g') " +
+        "      LIKE '%' || $3 || '%')) " +
+        'ORDER BY cl.name LIMIT 20',
+      [ctx.companyId, q, digits],
+    );
+    return rows;
+  });
+
+  /** לקוח אחד עם אנשי הקשר הפעילים שלו — מה שהטופס מציג אחרי שנבחר לקוח. */
+  app.get('/api/calls/clients/:clientId', async (req) => {
+    const clientId = idParam(req, 'clientId');
+    const { rows } = await db.query(
+      'SELECT cl.id, cl.name, cl.phone, cl.city, ccs.call_remarks AS "callRemarks", ' +
+        'ccs.default_owner_id AS "defaultOwnerId" ' +
+        'FROM clients cl ' +
+        'LEFT JOIN client_company_settings ccs ON ccs.client_id = cl.id AND ccs.company_id = $2 ' +
+        'WHERE cl.id = $1',
+      [clientId, ctx.companyId],
+    );
+    if (!rows[0]) throw notFound(msg('notFound', ctx.lang));
+    const contacts = await db.query(
+      `SELECT ct.id, ${personExpr('ct')} AS name, ct.mobile, ct.email, ct.position ` +
+        'FROM contacts ct WHERE ct.client_id = $1 AND ct.active ORDER BY ct.first_name, ct.last_name',
+      [clientId],
+    );
+    return { ...rows[0], contacts: contacts.rows };
   });
 
   app.get('/api/calls', async (req) => {
@@ -683,7 +784,7 @@ export function registerCallRoutes(app: FastifyInstance, ctx: Ctx): void {
       'SELECT sc.id, sc.number, sc.company_id AS "companyId", co.name AS "companyName", ' +
         '(sc.company_id <> $3) AS shared, sc.client_id AS "clientId", cl.name AS "clientName", ' +
         'cl.phone AS "clientPhone", cl.city AS "clientCity", ' +
-        // ההערה של הלקוח בחברה הזו — הבאנר האדום בטופס
+        // ההערה של הלקוח בחברה הפעילה — הבאנר האדום בטופס, גם בקריאה משותפת
         'ccs.call_remarks AS "clientRemarks", ccs.hour_cost AS "hourCost", ' +
         `sc.contact_id AS "contactId", ${personExpr('ct')} AS "contactName", ct.mobile AS "contactMobile", ` +
         'ct.email AS "contactEmail", ' +
@@ -705,7 +806,7 @@ export function registerCallRoutes(app: FastifyInstance, ctx: Ctx): void {
         'JOIN companies co ON co.id = sc.company_id ' +
         'JOIN clients cl ON cl.id = sc.client_id ' +
         'JOIN lookups st ON st.id = sc.status_id ' +
-        'LEFT JOIN client_company_settings ccs ON ccs.client_id = sc.client_id AND ccs.company_id = sc.company_id ' +
+        'LEFT JOIN client_company_settings ccs ON ccs.client_id = sc.client_id AND ccs.company_id = $3 ' +
         'LEFT JOIN contacts ct ON ct.id = sc.contact_id ' +
         'LEFT JOIN users ow ON ow.id = sc.owner_user_id ' +
         'LEFT JOIN users op ON op.id = sc.open_by ' +
@@ -735,6 +836,7 @@ export function registerCallRoutes(app: FastifyInstance, ctx: Ctx): void {
     const body = req.body as Record<string, unknown>;
     const input = readInput(body);
     const created = await db.tx((tx) => createCall(withDb(ctx, tx), ctx.companyId, input, sourceOf(body.source)));
+    await notifyCall(db, hub, created.id, 'created');
     return created;
   });
 
@@ -750,13 +852,24 @@ export function registerCallRoutes(app: FastifyInstance, ctx: Ctx): void {
     const params = await loadParams(db, call.companyId);
     assertRequired(params, input, call);
 
-    return db.tx(async (tx) => {
+    const saved = await db.tx(async (tx) => {
       const txCtx = withDb(ctx, tx);
       const next = { ...call, ...strip(input) } as CallRecord;
       if (input.typeId) await lookupOf(tx, call.companyId, input.typeId, 'call_type');
       if (input.billingStatusId) await lookupOf(tx, call.companyId, input.billingStatusId, 'billing_status');
       if (input.durationId) await lookupOf(tx, call.companyId, input.durationId, 'duration');
       const closing = await isClosing(tx, call.companyId, next.statusId);
+      // רק מה שהשתנה נבדק: קריאה ישנה של לקוח שכובה בינתיים עדיין נשמרת
+      await assertRefs(
+        tx,
+        call.companyId,
+        {
+          clientId: next.clientId !== call.clientId ? next.clientId : null,
+          contactId: next.contactId !== call.contactId || next.clientId !== call.clientId ? next.contactId : null,
+          ownerUserId: next.ownerUserId !== call.ownerUserId ? next.ownerUserId : null,
+        },
+        next.clientId,
+      );
 
       await tx.query(
         'UPDATE service_calls SET client_id = $2, contact_id = $3, owner_user_id = $4, subject = $5, ' +
@@ -794,6 +907,8 @@ export function registerCallRoutes(app: FastifyInstance, ctx: Ctx): void {
       await audit(txCtx, 'call.update', String(call.id), input);
       return requireCall(txCtx, call.id);
     });
+    await notifyCall(db, hub, call.id, 'updated');
+    return saved;
   });
 
   /**
@@ -807,8 +922,10 @@ export function registerCallRoutes(app: FastifyInstance, ctx: Ctx): void {
     if ((req.query as { confirm?: string }).confirm !== 'yes') {
       throw new HttpError(409, 'מחיקת קריאה אינה מומלצת. אשרו את הפעולה או סגרו את הקריאה במקום');
     }
+    const audience = await audienceOf(db, call.id);
     await db.query('DELETE FROM service_calls WHERE id = $1', [call.id]);
     await audit(ctx, 'call.delete', String(call.id), { number: call.number });
+    for (const companyId of audience) hub.broadcast(companyId, { t: 'call', callId: call.id, what: 'deleted' });
     return { ok: true };
   });
 }
