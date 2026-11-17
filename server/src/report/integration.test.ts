@@ -12,7 +12,7 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import Fastify, { type FastifyInstance } from 'fastify';
 import pg from 'pg';
 import { register } from 'tsx/esm/api';
@@ -410,12 +410,26 @@ dbTest('report routes: catalogue, JSON, Excel download, unknown report, role gua
   assert.equal((await appFor(ctxOf(kt, 'he', 'viewer')).inject('/api/reports/hours')).statusCode, 403);
 });
 
-dbTest('PDF: chromium prints a report, one job at a time', async () => {
-  if (!existsSync(P.chromiumPath())) return; // כרומיום מותקן בתמונת הדוקר; בלי זה אין מה לבדוק
+test('PDF: chromium prints a report, one job at a time', async (t) => {
+  if (!client) return t.skip('no database on localhost:5433');
+  // כרומיום מותקן בתמונת הדוקר; במכונה בלי כרומיום אין מה לבדוק
+  if (!existsSync(P.chromiumPath())) return t.skip(`no chromium at ${P.chromiumPath()} (set CHROMIUM_PATH)`);
   const results = await Promise.all(
     ['distribution', 'chart-clients'].map(async (id) =>
       R.reportToPdf(await R.buildReport(ctxOf(kt), id, R.EMPTY_FILTERS)),
     ),
   );
   for (const pdf of results) assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
+
+  // לבדיקה בעין: REPORT_SAMPLES_DIR=/tmp/x מפיק את כל אחד-עשר הדו"חות ל-PDF ול-Excel
+  const dir = process.env.REPORT_SAMPLES_DIR;
+  if (!dir) return;
+  await mkdir(dir, { recursive: true });
+  for (const lang of ['he', 'en'] as const) {
+    for (const def of R.REPORTS) {
+      const result = await R.buildReport(ctxOf(kt, lang), def.id, { ...filtersFor(def.id), subtotals: true });
+      await writeFile(`${dir}/${def.id}.${lang}.pdf`, await R.reportToPdf(result));
+      await writeFile(`${dir}/${def.id}.${lang}.xlsx`, await R.reportToExcel(result));
+    }
+  }
 });
