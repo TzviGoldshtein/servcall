@@ -6,6 +6,8 @@ import { IdleTimeout } from './IdleTimeout';
 import { Login } from './Login';
 import { CallsPage } from './pages/calls';
 import { ClientsPage, SettingsPage } from './pages/maintenance/MaintenancePage';
+import { ReportsPage } from './pages/reports';
+import { HoursBank, Services } from './pages/services';
 import { applyLang, loadLang, saveLang, t } from './i18n';
 import { applyTheme, cacheTheme, loadMode, saveMode, themeOf, watchSystemMode, type Mode } from './theme';
 
@@ -135,6 +137,12 @@ export function App() {
           <CallsPage />
         ) : tab === 'clients' ? (
           <ClientsPage />
+        ) : tab === 'hours' ? (
+          <HoursBank />
+        ) : tab === 'billing' ? (
+          <Services />
+        ) : tab === 'reports' ? (
+          <ReportsPage />
         ) : tab === 'settings' ? (
           // נתוני הבסיס; המיתוג מתווסף ללשונית הזו על ידי המודול שלו
           <SettingsPage />

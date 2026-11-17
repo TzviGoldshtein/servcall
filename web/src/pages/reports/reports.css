@@ -1,0 +1,46 @@
+/*
+ * מסך הדו"חות: תפריט דו"חות, מסך סינון ותצוגה מקדימה של אותו HTML שנשלח ל-PDF.
+ * מאפיינים לוגיים בלבד, וצבעים ממשתני ה-CSS של המעטפת.
+ */
+.rep-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.rep-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 0 240px;
+  max-inline-size: 100%;
+}
+.rep-menu button {
+  font: inherit;
+  text-align: start;
+  background: transparent;
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.rep-menu button[aria-current='page'] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+.rep-main {
+  flex: 1 1 480px;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.rep-frame {
+  inline-size: 100%;
+  block-size: 75vh;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
