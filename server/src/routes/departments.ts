@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { audit, can, type Ctx, type Role } from '../context.ts';
 import { badRequest, forbidden, notFound } from '../errors.ts';
+import type { Hub } from '../http.ts';
 import { localName, msg } from '../i18n.ts';
 
 /**
@@ -128,6 +129,39 @@ export function patchSet(
 
 export const isDuplicate = (err: unknown): boolean => (err as { code?: string }).code === '23505';
 
+// ---------------------------------------------------------------- עדכונים חיים
+
+/** הישויות שמסכי התחזוקה מאזינים להן. האירוע נושא רק "מה השתנה", בלי הנתון עצמו. */
+export type MaintenanceEntity =
+  | 'department'
+  | 'user'
+  | 'client'
+  | 'client-group'
+  | 'contact'
+  | 'lookup'
+  | 'params';
+
+/**
+ * נתון משותף (לקוח, איש קשר, טבלת קוד, מחלקה) השתנה — כל ארבע החברות צריכות לרענן.
+ * האירוע הוא רק רמז לטעינה מחדש: מי שמקבל אותו שולף את הנתון בעצמו, דרך ה-ctx שלו,
+ * ולכן שום שדה פר חברה לא עובר בערוץ הזה לחברה אחרת.
+ */
+export async function notifyShared(
+  ctx: Ctx,
+  hub: Hub | undefined,
+  entity: MaintenanceEntity,
+  id?: number,
+): Promise<void> {
+  if (!hub) return;
+  const { rows } = await ctx.db.query<{ id: number }>('SELECT id FROM companies WHERE active');
+  for (const company of rows) hub.broadcast(company.id, { t: 'maintenance', entity, id: id ?? null });
+}
+
+/** נתון של החברה הפעילה בלבד (שיוך נציג, פרמטרים, הגדרות לקוח) — רק היא שומעת. */
+export function notifyCompany(ctx: Ctx, hub: Hub | undefined, entity: MaintenanceEntity, id?: number): void {
+  hub?.broadcast(ctx.companyId, { t: 'maintenance', entity, id: id ?? null });
+}
+
 // ---------------------------------------------------------------- מחלקות
 
 export interface DepartmentRow {
@@ -146,7 +180,7 @@ const DEPT_COLUMNS = `d.id, d.name, d.name_en AS "nameEn", d.manager_id AS "mana
        (SELECT count(*)::int FROM user_companies uc
          WHERE uc.department_id = d.id AND uc.company_id = $1 AND uc.active) AS "members"`;
 
-export function registerDepartmentsRoutes(app: FastifyInstance, ctx: Ctx): void {
+export function registerDepartmentsRoutes(app: FastifyInstance, ctx: Ctx, hub?: Hub): void {
   /** המנהל חייב להיות נציג פעיל *בחברה הפעילה* — אחרת אדמין היה ממנה אדם שהוא לא רואה. */
   async function requireCompanyMember(userId: number): Promise<void> {
     const { rows } = await ctx.db.query(
@@ -192,6 +226,7 @@ export function registerDepartmentsRoutes(app: FastifyInstance, ctx: Ctx): void 
     );
     const id = rows[0]!.id;
     await audit(ctx, 'department.create', String(id), { name, nameEn, managerId }, req.ip);
+    await notifyShared(ctx, hub, 'department', id);
     return one(id);
   });
 
@@ -217,6 +252,7 @@ export function registerDepartmentsRoutes(app: FastifyInstance, ctx: Ctx): void 
     ]);
     if (!rowCount) throw notFound(msg('notFound', ctx.lang));
     await audit(ctx, 'department.update', String(id), b, req.ip);
+    await notifyShared(ctx, hub, 'department', id);
     return one(id);
   });
 
@@ -230,6 +266,7 @@ export function registerDepartmentsRoutes(app: FastifyInstance, ctx: Ctx): void 
     const before = await one(id);
     await ctx.db.query('UPDATE departments SET active = false WHERE id = $1', [id]);
     await audit(ctx, 'department.deactivate', String(id), { name: before.name }, req.ip);
+    await notifyShared(ctx, hub, 'department', id);
     return { ok: true, members: before.members };
   });
 }

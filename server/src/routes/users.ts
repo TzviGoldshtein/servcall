@@ -1,13 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import { hashPassword } from '../auth.ts';
 import { audit, type Ctx, type Role } from '../context.ts';
-import { badRequest, HttpError, notFound } from '../errors.ts';
+import { badRequest, forbidden, HttpError, notFound } from '../errors.ts';
+import type { Hub } from '../http.ts';
 import { isLang, msg } from '../i18n.ts';
 import {
   bodyOf,
   flag,
   idOf,
   isDuplicate,
+  notifyCompany,
   optBool,
   optEmail,
   optEmailList,
@@ -29,6 +31,11 @@ import {
  * הוא לא רואה ולא משנה שלוחה, הרשאה או מזהה הנה"ח של אותו אדם בחברה אחרת, ולכן
  * כל שאילתה כאן מצטמצמת ל-company_id של ההקשר. השבתת האדם עצמו (בכל החברות)
  * שמורה לסופר-אדמין.
+ *
+ * זהות הכניסה (מייל, שם משתמש, סיסמה) היא אחת לכל החברות. לכן אדמין של חברה
+ * רשאי לגעת בה רק כשהאדם שייך לחברה שלו בלבד: אחרת איפוס סיסמה בקי טלקום היה
+ * פותח לאדמין שלה כניסה לחשבון של אותו אדם בקוריץ. אדם שמשויך לעוד חברה, או
+ * סופר-אדמין — זהות הכניסה שלו נערכת בידי סופר-אדמין (או בידי האדם עצמו).
  */
 
 const ROLES: Role[] = ['admin', 'agent', 'opener', 'viewer'];
@@ -99,7 +106,31 @@ const USER_COLUMNS = `u.id, u.email, u.username, u.first_name AS "firstName", u.
        EXISTS (SELECT 1 FROM user_companies o
                 WHERE o.user_id = u.id AND o.company_id <> uc.company_id AND o.active) AS "inOtherCompanies"`;
 
-export function registerUsersRoutes(app: FastifyInstance, ctx: Ctx): void {
+export function registerUsersRoutes(app: FastifyInstance, ctx: Ctx, hub?: Hub): void {
+  /** ראו ההסבר בראש הקובץ: זהות כניסה משותפת לא נערכת מתוך חברה אחת. */
+  async function guardIdentity(id: number): Promise<void> {
+    if (ctx.user.isSuperadmin || id === ctx.user.id) return;
+    const { rows } = await ctx.db.query(
+      `SELECT 1 FROM users u
+        WHERE u.id = $1
+          AND (u.is_superadmin
+               OR EXISTS (SELECT 1 FROM user_companies o WHERE o.user_id = u.id AND o.company_id <> $2))`,
+      [id, ctx.companyId],
+    );
+    if (rows[0]) {
+      throw forbidden(
+        ctx.lang === 'en'
+          ? 'This person also works in another company. Only a superadmin can change their sign-in details'
+          : 'האדם הזה משויך גם לחברה אחרת. את פרטי הכניסה שלו (מייל, שם משתמש, סיסמה) משנה סופר-אדמין בלבד',
+      );
+    }
+  }
+
+  function langOf(value: unknown): string {
+    if (!isLang(value)) throw badRequest('שפה לא תקינה');
+    return value;
+  }
+
   async function one(id: number): Promise<UserRow> {
     const { rows } = await ctx.db.query<UserRow>(
       `SELECT ${USER_COLUMNS} FROM users u
@@ -225,7 +256,7 @@ export function registerUsersRoutes(app: FastifyInstance, ctx: Ctx): void {
     const firstName = text(b.firstName, 'שם פרטי', 60);
     const lastName = optText(b.lastName, 'שם משפחה', 60) ?? null;
     const username = optText(b.username, 'שם משתמש', 50) ?? null;
-    const lang = isLang(b.lang) ? b.lang : 'he';
+    const lang = b.lang === undefined ? 'he' : langOf(b.lang);
     const hash = b.password === undefined || b.password === null || b.password === ''
       ? null
       : await hashPassword(password(b.password));
@@ -248,6 +279,7 @@ export function registerUsersRoutes(app: FastifyInstance, ctx: Ctx): void {
         return userId;
       });
       await audit(ctx, 'user.create', String(id), { email, firstName, role: fields.role }, req.ip);
+      notifyCompany(ctx, hub, 'user', id);
       return one(id);
     } catch (err) {
       if (isDuplicate(err)) {
@@ -268,17 +300,27 @@ export function registerUsersRoutes(app: FastifyInstance, ctx: Ctx): void {
     if (b.companyId !== undefined && Number(b.companyId) !== ctx.companyId) {
       throw badRequest('אפשר לערוך רק את השיוך של החברה שאתה עובד בה כרגע');
     }
-    await one(id); // מוודא שהאדם משויך לחברה הפעילה
-    if (b.isSuperadmin !== undefined) requireSuperadmin(ctx);
-    if (b.active !== undefined) requireSuperadmin(ctx); // השבתת האדם נוגעת בכל החברות
+    const before = await one(id); // מוודא שהאדם משויך לחברה הפעילה
+    // הטופס שולח את הרשומה כולה; רק שינוי בפועל של שדה מוגן דורש את ההרשאה שלו
+    if (b.isSuperadmin !== undefined && b.isSuperadmin !== before.isSuperadmin) requireSuperadmin(ctx);
+    if (b.active !== undefined && b.active !== before.active) requireSuperadmin(ctx); // נוגע בכל החברות
+    const email = optEmail(b.email, 'מייל');
+    const username = optText(b.username, 'שם משתמש', 50);
+    if (email === null) throw badRequest('חסר שדה: מייל');
+    if (
+      (email !== undefined && email !== before.email.toLowerCase()) ||
+      (username !== undefined && username !== before.username)
+    ) {
+      await guardIdentity(id);
+    }
 
     const person = patchSet(
       {
-        email: optEmail(b.email, 'מייל'),
-        username: optText(b.username, 'שם משתמש', 50),
+        email,
+        username,
         first_name: b.firstName === undefined ? undefined : text(b.firstName, 'שם פרטי', 60),
         last_name: optText(b.lastName, 'שם משפחה', 60),
-        lang: b.lang === undefined ? undefined : isLang(b.lang) ? b.lang : 'he',
+        lang: b.lang === undefined ? undefined : langOf(b.lang),
         is_superadmin: optBool(b.isSuperadmin, 'סופר-אדמין'),
         active: optBool(b.active, 'פעיל'),
       },
@@ -306,27 +348,40 @@ export function registerUsersRoutes(app: FastifyInstance, ctx: Ctx): void {
       }
     });
     await audit(ctx, 'user.update', String(id), b, req.ip);
+    // הרשאה שהשתנתה או שיוך שהושבת: החיבור החי נסגר מיד ולא בבקשה הבאה
+    if (fields.role !== undefined || fields.active === false || b.active === false) hub?.dropUser(id);
+    notifyCompany(ctx, hub, 'user', id);
     return one(id);
   });
 
-  /** צירוף אדם קיים לחברה הפעילה, או עדכון השיוך שלו בה (upsert על השורה הזו בלבד). */
+  /**
+   * צירוף אדם קיים לחברה הפעילה, או עדכון השיוך שלו בה — השורה הזו בלבד.
+   * ברירת המחדל "נציג" חלה רק בצירוף חדש; בעדכון, שדה שלא נשלח נשאר כמו שהוא,
+   * אחרת שמירה בלי הרשאה הייתה מורידה אדמין לנציג.
+   */
   app.put('/api/users/:id/membership', async (req) => {
     requireAdmin(ctx);
     const id = idOf(req);
     const b = bodyOf(req);
     const { rows: exists } = await ctx.db.query('SELECT 1 FROM users WHERE id = $1 AND active', [id]);
     if (!exists[0]) throw notFound(msg('notFound', ctx.lang));
-    const fields = await membershipFields({ ...b, role: b.role ?? 'agent' });
+    const { rows: member } = await ctx.db.query(
+      'SELECT 1 FROM user_companies WHERE user_id = $1 AND company_id = $2',
+      [id, ctx.companyId],
+    );
+    const fields = await membershipFields(member[0] ? b : { ...b, role: b.role ?? 'agent' });
     guardSelf(id, fields);
     const keys = Object.keys(fields).filter((k) => fields[k] !== undefined);
     await ctx.db.query(
       `INSERT INTO user_companies (user_id, company_id${keys.length ? ', ' + keys.join(', ') : ''})
        VALUES ($1, $2${keys.map((_, i) => `, $${i + 3}`).join('')})
        ON CONFLICT (user_id, company_id) DO UPDATE SET
-       ${keys.length ? keys.map((k) => `${k} = EXCLUDED.${k}`).join(', ') : 'active = true'}`,
+       ${keys.length ? keys.map((k) => `${k} = EXCLUDED.${k}`).join(', ') : 'active = user_companies.active'}`,
       [id, ctx.companyId, ...keys.map((k) => fields[k])],
     );
     await audit(ctx, 'user.membership', String(id), { companyId: ctx.companyId, ...b }, req.ip);
+    hub?.dropUser(id);
+    notifyCompany(ctx, hub, 'user', id);
     return one(id);
   });
 
@@ -341,6 +396,8 @@ export function registerUsersRoutes(app: FastifyInstance, ctx: Ctx): void {
     );
     if (!rowCount) throw notFound(msg('notFound', ctx.lang));
     await audit(ctx, 'user.membership.deactivate', String(id), { companyId: ctx.companyId }, req.ip);
+    hub?.dropUser(id);
+    notifyCompany(ctx, hub, 'user', id);
     return { ok: true };
   });
 
@@ -356,6 +413,8 @@ export function registerUsersRoutes(app: FastifyInstance, ctx: Ctx): void {
     if (!rowCount) throw notFound(msg('notFound', ctx.lang));
     await ctx.db.query('DELETE FROM sessions WHERE user_id = $1', [id]);
     await audit(ctx, 'user.deactivate', String(id), null, req.ip);
+    hub?.dropUser(id);
+    notifyCompany(ctx, hub, 'user', id);
     return { ok: true };
   });
 
@@ -369,11 +428,13 @@ export function registerUsersRoutes(app: FastifyInstance, ctx: Ctx): void {
     const id = idOf(req);
     const b = bodyOf(req);
     await one(id); // רק אדם שמשויך לחברה הפעילה
+    await guardIdentity(id);
     const clear = b.clear === true;
     const hash = clear ? null : await hashPassword(password(b.password));
     await ctx.db.query('UPDATE users SET password_hash = $2 WHERE id = $1', [id, hash]);
     await ctx.db.query('DELETE FROM sessions WHERE user_id = $1', [id]);
     await audit(ctx, clear ? 'user.password.clear' : 'user.password.set', String(id), null, req.ip);
+    hub?.dropUser(id);
     return { ok: true };
   });
 }
