@@ -2,12 +2,15 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import ExcelJS from 'exceljs';
 import { audit, type Ctx } from '../context.ts';
 import { badRequest, HttpError, notFound } from '../errors.ts';
+import type { Hub } from '../http.ts';
 import { msg, type Lang } from '../i18n.ts';
 import {
   bodyOf,
   flag,
   idOf,
   isDuplicate,
+  notifyCompany,
+  notifyShared,
   optBool,
   optInt,
   optNum,
@@ -54,7 +57,7 @@ const CLIENT_COLUMNS = `c.id, c.group_id AS "groupId", g.name AS "groupName", c.
        s.call_remarks AS "callRemarks", s.default_owner_id AS "defaultOwnerId",
        NULLIF(TRIM(COALESCE(o.first_name, '') || ' ' || COALESCE(o.last_name, '')), '') AS "ownerName",
        s.hour_cost AS "hourCost", COALESCE(s.offline, false) AS offline,
-       (s.client_id IS NOT NULL) AS "inCompany", COALESCE(s.active, false) AS "companyActive",
+       (s.client_id IS NOT NULL) AS "inCompany", COALESCE(s.active, true) AS "companyActive",
        (SELECT count(*)::int FROM contacts ct WHERE ct.client_id = c.id AND ct.active) AS contacts`;
 
 const FROM_CLIENTS = `FROM clients c
@@ -114,15 +117,36 @@ function listFilters(q: Record<string, string | undefined>, companyId: number) {
   like(`(COALESCE(c.phone,'') ILIKE '%' || $v || '%' OR COALESCE(c.phone2,'') ILIKE '%' || $v || '%'
          OR COALESCE(c.mobile,'') ILIKE '%' || $v || '%')`, q.phone);
   like(`COALESCE(s.call_remarks,'') ILIKE '%' || $v || '%'`, q.callRemarks);
-  eq('c.group_id = $v', q.groupId, (v) => Number(v));
-  eq('s.default_owner_id = $v', q.ownerId, (v) => Number(v));
+  eq('c.group_id = $v', q.groupId, idFilter);
+  eq('s.default_owner_id = $v', q.ownerId, idFilter);
   eq('c.active = $v', q.active, (v) => v === '1' || v === 'true');
   eq('COALESCE(s.offline,false) = $v', q.offline, (v) => v === '1' || v === 'true');
-  // ברירת המחדל במסך: רק לקוחות פעילים. ?all=1 מבטל אותה
-  if (q.active === undefined && q.all !== '1' && q.all !== 'true') where.push('c.active');
+  // ברירת המחדל במסך: לקוחות פעילים, שלא הושבתו בחברה הפעילה. לקוח בלי שורת
+  // הגדרות לחברה הזו נחשב פעיל בה — המאגר משותף וכולן רואות את כולו. ?all=1 מבטל
+  if (q.active === undefined && q.all !== '1' && q.all !== 'true') {
+    where.push('c.active AND COALESCE(s.active, true)');
+  }
   // רק לקוחות שמוגדרים לחברה הפעילה (יש להם שורת הגדרות פעילה)
   if (q.inCompany === '1' || q.inCompany === 'true') where.push('s.client_id IS NOT NULL AND s.active');
   return { values, sql: where.length ? 'WHERE ' + where.join(' AND ') : '' };
+}
+
+/** מזהה בסינון. ערך שאינו מספר נדחה ב-400 ולא מגיע למסד כ-NaN. */
+function idFilter(raw: string): number {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) throw badRequest('ערך סינון לא תקין');
+  return n;
+}
+
+/**
+ * קישור לאתר או לתיקיית רשת של הלקוח. נתיב UNC (\\server\share) לגיטימי כאן, ולכן
+ * לא נדרש http — רק נחסמות סכמות שמריצות קוד כשהקישור מוצג כ-href.
+ */
+function optLink(value: unknown): string | null | undefined {
+  const v = optText(value, 'קישור', 500);
+  if (!v) return v;
+  if (/^\s*(javascript|data|vbscript)\s*:/i.test(v)) throw badRequest('הקישור אינו תקין');
+  return v;
 }
 
 function orderBy(q: Record<string, string | undefined>): string {
@@ -174,7 +198,7 @@ const EXPORT_HEADERS: Record<Lang, [keyof ClientRow | 'contacts', string][]> = {
   ],
 };
 
-export function registerClientsRoutes(app: FastifyInstance, ctx: Ctx): void {
+export function registerClientsRoutes(app: FastifyInstance, ctx: Ctx, hub?: Hub): void {
   async function one(id: number): Promise<ClientRow> {
     const { rows } = await ctx.db.query<ClientRow>(
       `SELECT ${CLIENT_COLUMNS} ${FROM_CLIENTS} WHERE c.id = $2`,
@@ -201,7 +225,7 @@ export function registerClientsRoutes(app: FastifyInstance, ctx: Ctx): void {
       apartment: optText(b.apartment, 'דירה', 20),
       zip: optText(b.zip, 'מיקוד', 20),
       po_box: optText(b.poBox, 'תא דואר', 20),
-      link_url: optText(b.linkUrl, 'קישור', 500),
+      link_url: optLink(b.linkUrl),
       external_id: optText(b.externalId, 'מזהה חיצוני', 60),
       active: optBool(b.active, 'פעיל'),
     };
@@ -247,6 +271,7 @@ export function registerClientsRoutes(app: FastifyInstance, ctx: Ctx): void {
       [text(b.name, 'שם הקבוצה', 120), optText(b.manager, 'מנהל הקבוצה', 120) ?? null],
     );
     await audit(ctx, 'client-group.create', String(rows[0]!.id), b, req.ip);
+    await notifyShared(ctx, hub, 'client-group', rows[0]!.id);
     return { id: rows[0]!.id };
   });
 
@@ -269,6 +294,7 @@ export function registerClientsRoutes(app: FastifyInstance, ctx: Ctx): void {
     ]);
     if (!rowCount) throw notFound(msg('notFound', ctx.lang));
     await audit(ctx, 'client-group.update', String(id), b, req.ip);
+    await notifyShared(ctx, hub, 'client-group', id);
     return { ok: true };
   });
 
@@ -279,6 +305,7 @@ export function registerClientsRoutes(app: FastifyInstance, ctx: Ctx): void {
     const { rowCount } = await ctx.db.query('UPDATE client_groups SET active = false WHERE id = $1', [id]);
     if (!rowCount) throw notFound(msg('notFound', ctx.lang));
     await audit(ctx, 'client-group.deactivate', String(id), null, req.ip);
+    await notifyShared(ctx, hub, 'client-group', id);
     return { ok: true };
   });
 
@@ -366,6 +393,7 @@ export function registerClientsRoutes(app: FastifyInstance, ctx: Ctx): void {
         return clientId;
       });
       await audit(ctx, 'client.create', String(id), { name: shared.name }, req.ip);
+      await notifyShared(ctx, hub, 'client', id);
       return one(id);
     } catch (err) {
       if (isDuplicate(err)) throw new HttpError(409, 'כבר קיים לקוח עם המזהה הזה');
@@ -381,7 +409,10 @@ export function registerClientsRoutes(app: FastifyInstance, ctx: Ctx): void {
     requireAdmin(ctx);
     const id = idOf(req);
     const b = bodyOf(req);
-    await one(id);
+    const before = await one(id);
+    // השבתת הלקוח עצמו נוגעת בכל ארבע החברות, בדיוק כמו DELETE ?global=1.
+    // הטופס שולח את הרשומה כולה, ולכן רק שינוי בפועל דורש סופר-אדמין
+    if (b.active !== undefined && b.active !== before.active) requireSuperadmin(ctx);
     const shared = patchSet(sharedFields(b, false), 3);
     const company = await companyFields(b);
     const ckeys = Object.keys(company).filter((k) => company[k] !== undefined);
@@ -405,6 +436,9 @@ export function registerClientsRoutes(app: FastifyInstance, ctx: Ctx): void {
       }
     });
     await audit(ctx, 'client.update', String(id), b, req.ip);
+    // שדה משותף זז — כולן מרעננות; רק הגדרות החברה זזו — רק היא
+    if (shared) await notifyShared(ctx, hub, 'client', id);
+    else notifyCompany(ctx, hub, 'client', id);
     return one(id);
   });
 
@@ -431,6 +465,8 @@ export function registerClientsRoutes(app: FastifyInstance, ctx: Ctx): void {
       );
     }
     await audit(ctx, global ? 'client.deactivate.global' : 'client.deactivate', String(id), null, req.ip);
+    if (global) await notifyShared(ctx, hub, 'client', id);
+    else notifyCompany(ctx, hub, 'client', id);
     return { ok: true };
   });
 }

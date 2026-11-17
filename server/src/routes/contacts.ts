@@ -2,12 +2,14 @@ import type { FastifyInstance } from 'fastify';
 import { hashPassword } from '../auth.ts';
 import { config } from '../config.ts';
 import { audit, type Ctx } from '../context.ts';
-import { badRequest, notFound } from '../errors.ts';
+import { badRequest, HttpError, notFound } from '../errors.ts';
+import type { Hub } from '../http.ts';
 import { msg } from '../i18n.ts';
 import {
   bodyOf,
   flag,
   idOf,
+  notifyShared,
   optBool,
   optEmail,
   optText,
@@ -91,7 +93,20 @@ const CONTACT_COLUMNS = `ct.id, ct.client_id AS "clientId", ct.first_name AS "fi
        (ct.password_hash IS NOT NULL) AS "hasPassword", ct.read_only AS "readOnly",
        ct.external_id AS "externalId", ct.active`;
 
-export function registerContactsRoutes(app: FastifyInstance, ctx: Ctx): void {
+export function registerContactsRoutes(app: FastifyInstance, ctx: Ctx, hub?: Hub): void {
+  /**
+   * שם המשתמש של הפורטל הוא מה שאיש הקשר מקליד בכניסה, ולכן חייב להיות יחיד
+   * בין כל אנשי הקשר. לסכמה אין על זה אינדקס ייחודי, אז הבדיקה כאן.
+   */
+  async function requireFreeUsername(username: unknown, exceptId: number | null): Promise<void> {
+    if (typeof username !== 'string') return;
+    const { rows } = await ctx.db.query(
+      'SELECT 1 FROM contacts WHERE lower(username) = lower($1) AND id IS DISTINCT FROM $2 LIMIT 1',
+      [username, exceptId],
+    );
+    if (rows[0]) throw new HttpError(409, 'שם המשתמש הזה כבר תפוס אצל איש קשר אחר');
+  }
+
   async function requireClient(clientId: number): Promise<{ id: number; name: string }> {
     const { rows } = await ctx.db.query<{ id: number; name: string }>(
       'SELECT id, name FROM clients WHERE id = $1',
@@ -161,7 +176,7 @@ export function registerContactsRoutes(app: FastifyInstance, ctx: Ctx): void {
     const e164 = normaliseE164(phone);
     if (!e164) return { e164: null, matches: [] };
     const { rows } = await ctx.db.query(
-      `SELECT ${CONTACT_COLUMNS}, c.name AS "clientName", c.id AS "clientId",
+      `SELECT ${CONTACT_COLUMNS}, c.name AS "clientName",
               s.call_remarks AS "callRemarks", COALESCE(s.offline, false) AS offline
          FROM contacts ct
          JOIN clients c ON c.id = ct.client_id
@@ -182,6 +197,7 @@ export function registerContactsRoutes(app: FastifyInstance, ctx: Ctx): void {
     const clientId = idOf(req, 'clientId');
     await requireClient(clientId);
     const values = fields(bodyOf(req), true);
+    await requireFreeUsername(values.username, null);
     const keys = Object.keys(values).filter((k) => values[k] !== undefined);
     const { rows } = await ctx.db.query<{ id: number }>(
       `INSERT INTO contacts (client_id, ${keys.join(', ')})
@@ -189,6 +205,7 @@ export function registerContactsRoutes(app: FastifyInstance, ctx: Ctx): void {
       [clientId, ...keys.map((k) => values[k])],
     );
     await audit(ctx, 'contact.create', String(rows[0]!.id), { clientId, name: values.first_name }, req.ip);
+    await notifyShared(ctx, hub, 'contact', rows[0]!.id);
     return one(rows[0]!.id);
   });
 
@@ -197,10 +214,13 @@ export function registerContactsRoutes(app: FastifyInstance, ctx: Ctx): void {
     const id = idOf(req);
     const b = bodyOf(req);
     await one(id);
-    const patch = patchSet(fields(b, false), 2);
+    const values = fields(b, false);
+    await requireFreeUsername(values.username, id);
+    const patch = patchSet(values, 2);
     if (!patch) throw badRequest('אין מה לעדכן');
     await ctx.db.query(`UPDATE contacts SET ${patch.set} WHERE id = $1`, [id, ...patch.values]);
     await audit(ctx, 'contact.update', String(id), b, req.ip);
+    await notifyShared(ctx, hub, 'contact', id);
     return one(id);
   });
 
@@ -211,6 +231,7 @@ export function registerContactsRoutes(app: FastifyInstance, ctx: Ctx): void {
     const { rowCount } = await ctx.db.query('UPDATE contacts SET active = false WHERE id = $1', [id]);
     if (!rowCount) throw notFound(msg('notFound', ctx.lang));
     await audit(ctx, 'contact.deactivate', String(id), null, req.ip);
+    await notifyShared(ctx, hub, 'contact', id);
     return { ok: true };
   });
 
