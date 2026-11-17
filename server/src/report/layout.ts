@@ -9,7 +9,7 @@
  */
 import type { Block, ReportHead, ReportResult, Tone } from './types.ts';
 import { barChartSvg } from './chart.ts';
-import { statusCssVars } from './status.ts';
+import { REPORT_RED, statusCssVars } from './status.ts';
 
 export const esc = (v: unknown): string =>
   String(v ?? '')
@@ -34,6 +34,8 @@ function cssVars(head: ReportHead): string {
     '--primary-contrast': head.brand.onPrimary,
     '--accent': head.brand.accent,
     ...statusCssVars(),
+    // האדום של שורת התיאור ב"איתור קריאות" — קבוע, לא סטטוס ולא מותג
+    '--report-red': REPORT_RED,
   };
   return Object.entries(vars)
     .map(([k, v]) => `${k}:${v}`)
@@ -84,11 +86,11 @@ const STYLE = `
   td.rowhead { font-weight: 600; background: #FFFFFF; }
   td.total, th.total { font-weight: 700; }
   tr.subtotal td { font-weight: 700; background: #EEF2F6; }
-  .t-red { color: var(--status-open); }
+  .t-red { color: var(--report-red); }
   .t-muted { color: #6B7280; }
   .t-strong { font-weight: 700; }
   /* ---- איתור קריאות: שתי שורות לקריאה ---- */
-  tr.call-desc td { border-top: 0; color: var(--status-open); white-space: pre-line; }
+  tr.call-desc td { border-top: 0; color: var(--report-red); white-space: pre-line; }
   tr.call-events td { border-top: 0; font-size: 9px; }
   tr.call-events ul { margin: 0; padding-inline-start: 14px; }
   .count-line { margin-top: 5px; font-weight: 700; font-size: 11px; }

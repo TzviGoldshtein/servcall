@@ -49,3 +49,9 @@ export const toneLabel = (tone: StatusTone, lang: Lang): string =>
   lang === 'en'
     ? { open: 'Open', progress: 'In progress', followup: 'Follow-up', waiting: 'Waiting', closed: 'Closed', cancelled: 'Cancelled' }[tone]
     : { open: 'פתוחה', progress: 'בטיפול', followup: 'למעקב', waiting: 'ממתין', closed: 'סגורה', cancelled: 'בוטלה' }[tone];
+
+/**
+ * האדום של שורת התיאור ב"איתור קריאות" ובהיסטוריית לקוח. גם הוא קבוע לכל
+ * החברות: זה סימן היכר של הדו"ח המקורי ולא צבע מותג או סטטוס.
+ */
+export const REPORT_RED = '#B91C1C';

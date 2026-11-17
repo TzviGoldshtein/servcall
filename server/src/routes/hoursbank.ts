@@ -18,7 +18,7 @@ import { EMPTY_FILTERS, bankTable, reportHead, reportToExcel, reportToPdf } from
 import { amount, contentDisposition, id as idField, isTrue, optionalText, requireRole, text } from '../report/input.ts';
 import { dateText, hoursText } from '../report/fmt.ts';
 import { texts } from '../report/texts.ts';
-import type { AppCtx, ReportResult } from '../report/types.ts';
+import type { ReportResult } from '../report/types.ts';
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -47,18 +47,17 @@ const toView = (b: BankRow, lang: 'he' | 'en') => {
   };
 };
 
-export function registerHoursBankRoutes(app: FastifyInstance, ctx: AppCtx): void {
+export function registerHoursBankRoutes(app: FastifyInstance, ctx: Ctx): void {
   /** רשימת הבנקים של החברה, עם היתרה המחושבת לכל אחד. */
   app.get('/api/hours-banks', async (req) => {
-    const c = ctx.ctxOf(req);
-    requireRole(c, 'viewer');
+    requireRole(ctx, 'viewer');
     const q = (req.query ?? {}) as Record<string, unknown>;
     const clientIds = q.clientId ? [idField(q.clientId, 'לקוח')] : [];
-    const rows = await fetchHoursBanks(c, {
+    const rows = await fetchHoursBanks(ctx, {
       ...(clientIds.length ? { clientIds } : {}),
       activeOnly: !isTrue(q.includeInactive),
     });
-    const banks = rows.map((b) => toView(b, c.lang));
+    const banks = rows.map((b) => toView(b, ctx.lang));
     // רק הבנקים שדורשים תשומת לב — יתרה נמוכה, אפס או חריגה
     const list = isTrue(q.attentionOnly) ? banks.filter((b) => b.state !== 'ok') : banks;
     return {
@@ -74,19 +73,18 @@ export function registerHoursBankRoutes(app: FastifyInstance, ctx: AppCtx): void
 
   /** בנק אחד עם התנועות שלו: כל דיווח שנזקף אליו, והאם הוא נספר בבנק. */
   app.get('/api/hours-banks/:id', async (req) => {
-    const c = ctx.ctxOf(req);
-    requireRole(c, 'viewer');
+    requireRole(ctx, 'viewer');
     const bankId = idOf(req);
-    const rows = await fetchHoursBanks(c, { bankIds: [bankId], activeOnly: false });
+    const rows = await fetchHoursBanks(ctx, { bankIds: [bankId], activeOnly: false });
     const bank = rows[0];
     if (!bank) throw notFound('בנק השעות לא נמצא');
-    const entries = await fetchBankEntries(c, bankId);
+    const entries = await fetchBankEntries(ctx, bankId);
     return {
-      bank: toView(bank, c.lang),
+      bank: toView(bank, ctx.lang),
       entries: entries.map((e) => ({
         id: e.id,
         workDate: e.work_date,
-        workDateText: dateText(e.work_date, c.lang),
+        workDateText: dateText(e.work_date, ctx.lang),
         reporter: e.reporter_name,
         callId: e.call_id,
         callNumber: e.call_number,
@@ -102,21 +100,20 @@ export function registerHoursBankRoutes(app: FastifyInstance, ctx: AppCtx): void
   });
 
   app.post('/api/hours-banks', async (req) => {
-    const c = ctx.ctxOf(req);
-    requireRole(c, 'admin');
+    requireRole(ctx, 'admin');
     const b = (req.body ?? {}) as Record<string, unknown>;
     const clientId = idField(b.clientId, 'לקוח');
     const name = text(b.name, 'שם הבנק', 80);
     const hours = amount(b.hours ?? 0, 'שעות שנרכשו', 100_000);
-    const { rows } = await c.db.query<{ id: number }>(
+    const { rows } = await ctx.db.query<{ id: number }>(
       'INSERT INTO hours_banks (client_id, company_id, name, hours) VALUES ($1,$2,$3,$4) RETURNING id',
-      [clientId, c.companyId, name, hours],
+      [clientId, ctx.companyId, name, hours],
     );
     const created = rows[0];
     if (!created) throw badRequest('יצירת בנק השעות נכשלה');
-    await audit(c, 'hoursBank.create', String(created.id), { clientId, name, hours }, req.ip);
-    const fresh = await fetchHoursBanks(c, { bankIds: [created.id], activeOnly: false });
-    return fresh[0] ? toView(fresh[0], c.lang) : { id: created.id };
+    await audit(ctx, 'hoursBank.create', String(created.id), { clientId, name, hours }, req.ip);
+    const fresh = await fetchHoursBanks(ctx, { bankIds: [created.id], activeOnly: false });
+    return fresh[0] ? toView(fresh[0], ctx.lang) : { id: created.id };
   });
 
   /**
@@ -124,12 +121,11 @@ export function registerHoursBankRoutes(app: FastifyInstance, ctx: AppCtx): void
    * היא תוצאה של הדיווחים ואין לה שדה.
    */
   app.patch('/api/hours-banks/:id', async (req) => {
-    const c = ctx.ctxOf(req);
-    requireRole(c, 'admin');
+    requireRole(ctx, 'admin');
     const bankId = idOf(req);
     const b = (req.body ?? {}) as Record<string, unknown>;
     const sets: string[] = [];
-    const values: unknown[] = [bankId, c.companyId];
+    const values: unknown[] = [bankId, ctx.companyId];
     const name = optionalText(b.name, 'שם הבנק', 80);
     if (name !== null) {
       sets.push(`name = $${values.push(name)}`);
@@ -141,14 +137,14 @@ export function registerHoursBankRoutes(app: FastifyInstance, ctx: AppCtx): void
       sets.push(`active = $${values.push(isTrue(b.active))}`);
     }
     if (!sets.length) throw badRequest('אין מה לעדכן');
-    const { rowCount } = await c.db.query(
+    const { rowCount } = await ctx.db.query(
       `UPDATE hours_banks SET ${sets.join(', ')} WHERE id = $1 AND company_id = $2`,
       values,
     );
     if (!rowCount) throw notFound('בנק השעות לא נמצא');
-    await audit(c, 'hoursBank.update', String(bankId), b, req.ip);
-    const fresh = await fetchHoursBanks(c, { bankIds: [bankId], activeOnly: false });
-    return fresh[0] ? toView(fresh[0], c.lang) : { id: bankId };
+    await audit(ctx, 'hoursBank.update', String(bankId), b, req.ip);
+    const fresh = await fetchHoursBanks(ctx, { bankIds: [bankId], activeOnly: false });
+    return fresh[0] ? toView(fresh[0], ctx.lang) : { id: bankId };
   });
 
   /**
@@ -156,28 +152,26 @@ export function registerHoursBankRoutes(app: FastifyInstance, ctx: AppCtx): void
    * קריאה גם אחרי שהבנק נסגר.
    */
   app.delete('/api/hours-banks/:id', async (req) => {
-    const c = ctx.ctxOf(req);
-    requireRole(c, 'admin');
+    requireRole(ctx, 'admin');
     const bankId = idOf(req);
-    const { rowCount } = await c.db.query(
+    const { rowCount } = await ctx.db.query(
       'UPDATE hours_banks SET active = false WHERE id = $1 AND company_id = $2',
-      [bankId, c.companyId],
+      [bankId, ctx.companyId],
     );
     if (!rowCount) throw notFound('בנק השעות לא נמצא');
-    await audit(c, 'hoursBank.deactivate', String(bankId), null, req.ip);
+    await audit(ctx, 'hoursBank.deactivate', String(bankId), null, req.ip);
     return { ok: true };
   });
 
   /** ייצוא מצב בנקי השעות — אותה כותרת אחידה כמו בשאר הדו"חות. */
   app.get('/api/hours-banks/export/:format', async (req, reply: FastifyReply) => {
-    const c = ctx.ctxOf(req);
-    requireRole(c, 'agent');
+    requireRole(ctx, 'agent');
     const format = (req.params as { format: string }).format;
     if (format !== 'pdf' && format !== 'excel') throw badRequest('פורמט לא נתמך');
     const q = (req.query ?? {}) as Record<string, unknown>;
     const clientIds = q.clientId ? [idField(q.clientId, 'לקוח')] : [];
-    const result = await bankReport(c, clientIds);
-    await audit(c, 'hoursBank.export', format, { clientIds }, req.ip);
+    const result = await bankReport(clientIds);
+    await audit(ctx, 'hoursBank.export', format, { clientIds }, req.ip);
     if (format === 'excel') {
       const xlsx = await reportToExcel(result);
       return reply
@@ -193,7 +187,7 @@ export function registerHoursBankRoutes(app: FastifyInstance, ctx: AppCtx): void
   });
 
   /** מסך בנק השעות מפיק דו"ח משלו, ולכן הוא מרכיב כותרת כמו כל דו"ח אחר. */
-  async function bankReport(c: Ctx, clientIds: number[]): Promise<ReportResult> {
+  async function bankReport(clientIds: number[]): Promise<ReportResult> {
     const def = {
       id: 'hours-banks',
       nameKey: 'colBank' as const,
@@ -202,9 +196,9 @@ export function registerHoursBankRoutes(app: FastifyInstance, ctx: AppCtx): void
       build: async () => [],
     };
     const [head, table] = await Promise.all([
-      reportHead(c, def, { ...EMPTY_FILTERS, clientIds }),
-      bankTable(c, clientIds),
+      reportHead(ctx, def, { ...EMPTY_FILTERS, clientIds }),
+      bankTable(ctx, clientIds),
     ]);
-    return { id: def.id, head: { ...head, reportName: texts(c.lang).colBank }, blocks: [table], orientation: 'landscape' };
+    return { id: def.id, head: { ...head, reportName: texts(ctx.lang).colBank }, blocks: [table], orientation: 'landscape' };
   }
 }

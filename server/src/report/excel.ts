@@ -7,12 +7,12 @@
  */
 import ExcelJS from 'exceljs';
 import type { Block, Cell, Column, ReportResult, Tone } from './types.ts';
-import { STATUS_COLORS } from './status.ts';
+import { REPORT_RED } from './status.ts';
 
 const argb = (hex: string): string => 'FF' + hex.replace('#', '').toUpperCase().padStart(6, '0').slice(-6);
 
 const TONE_COLOR: Record<Exclude<Tone, 'plain'>, string> = {
-  red: STATUS_COLORS.open,
+  red: REPORT_RED,
   muted: '#6B7280',
   strong: '#1B1F24',
 };
@@ -224,7 +224,7 @@ function writeBlock(ws: ExcelJS.Worksheet, block: Block, result: ReportResult): 
         // השורה השנייה: התיאור, באדום ולרוחב כל העמודות
         const d = ws.addRow([item.description]);
         ws.mergeCells(d.number, 1, d.number, Math.max(1, block.columns.length));
-        d.getCell(1).font = { color: { argb: argb(STATUS_COLORS.open) } };
+        d.getCell(1).font = { color: { argb: argb(REPORT_RED) } };
         d.getCell(1).alignment = { wrapText: true, vertical: 'top', horizontal: dir === 'rtl' ? 'right' : 'left' };
         for (const ev of item.events ?? []) {
           const e = ws.addRow(['', `${ev.when} — ${ev.who}: ${ev.body}`]);

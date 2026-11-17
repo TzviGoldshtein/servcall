@@ -3,20 +3,7 @@
  * פלטים: JSON למסך, HTML→PDF להדפסה ו-Excel. כך הכותרת האחידה, הסכומים
  * והעמודות מוגדרים פעם אחת, ואין שלוש גרסאות של אותו דו"ח שמתפצלות עם הזמן.
  */
-import type { FastifyRequest } from 'fastify';
-import type { Db } from '../db.ts';
-import type { Ctx } from '../context.ts';
 import type { Lang } from '../i18n.ts';
-
-/**
- * מה שמודול מסלולים מקבל מקליפת השרת. ה-Ctx נבנה פר בקשה (מי מבקש ובאיזו
- * חברה), ולכן הוא מגיע דרך `ctxOf(req)` ולא כשדה קבוע. קליפת השרת
- * (feat/core-shell) מעבירה כאן את אותו ctx שהיא בונה ב-hook האימות.
- */
-export interface AppCtx {
-  db: Db;
-  ctxOf(req: FastifyRequest): Ctx;
-}
 
 export type Align = 'start' | 'center' | 'end';
 /** גוון תא. 'red' הוא התיאור האדום של "איתור קריאות" — כך בדו"ח המקורי. */
